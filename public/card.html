@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>كارت العضو</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="cardpage">
+  <div class="print-bar">
+    <button class="btn primary" id="print">🖨️ طباعة</button>
+    <button class="btn whatsapp" id="wa-send">💬 إرسال واتساب</button>
+    <button class="btn" id="dl-img">💾 حفظ كصورة</button>
+    <button class="btn" id="copy-img">📋 نسخ الصورة</button>
+    <button class="btn" id="copy-link">🔗 نسخ الرابط</button>
+    <button class="btn" id="close">إغلاق</button>
+  </div>
+  <div class="card-wrapper">
+    <div id="card"></div>
+    <div class="card-mobile-hint">💡 يمكنك حفظ الكارت كصورة أو إبراز الـ QR مباشرة من شاشة الموبايل لمسحه عند الدخول</div>
+  </div>
+  <canvas id="cardCanvas" style="display:none;"></canvas>
+  <script src="/common.js"></script>
+  <script src="/card.js"></script>
+</body>
+</html>

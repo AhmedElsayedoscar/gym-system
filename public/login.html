@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>تسجيل الدخول</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="form">
+      <h1>إدارة الجيم</h1>
+      <p>ادخل كلمة المرور للمتابعة</p>
+      <div class="field">
+        <label for="pw">كلمة المرور</label>
+        <input id="pw" type="password" autocomplete="current-password" required autofocus>
+      </div>
+      <div id="err" class="alert bad" hidden></div>
+      <button class="btn primary" type="submit">دخول</button>
+    </form>
+  </div>
+  <script src="/common.js"></script>
+  <script src="/login.js"></script>
+</body>
+</html>

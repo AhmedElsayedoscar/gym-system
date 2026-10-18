@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>شاشة المسح</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="scan">
+  <div class="scan-wrap">
+    <div class="scan-top">
+      <a href="/">← لوحة التحكم</a>
+      <strong id="gym">تسجيل الحضور</strong>
+      <span id="count" class="muted">—</span>
+    </div>
+
+    <div class="video-box">
+      <video id="video" playsinline muted></video>
+      <div class="guide" id="guide" hidden></div>
+      <div class="msg" id="camMsg">جاري تشغيل الكاميرا…</div>
+    </div>
+
+    <form class="manual" id="manual" autocomplete="off">
+      <input id="code" placeholder="مرّر الكارت على القارئ أو اكتب الكود (GYM-XXXXXXXX)" maxlength="40" autofocus>
+      <button class="btn primary" type="submit">تسجيل</button>
+    </form>
+
+    <div class="result" id="result">
+      <div class="big">جاهز للمسح</div>
+      <div class="sub">وجّه كود الـ QR ناحية الكاميرا</div>
+    </div>
+
+    <div class="scan-recent">
+      <h2>آخر العمليات</h2>
+      <div id="recent"></div>
+    </div>
+  </div>
+  <script src="/common.js"></script>
+  <script src="/scan.js"></script>
+</body>
+</html>

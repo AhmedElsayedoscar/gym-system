@@ -1,0 +1,14 @@
+{
+  "name": "gym-system",
+  "version": "1.0.0",
+  "description": "سيستم إدارة جيم: اشتراكات وحضور الأعضاء بالـ QR (بدون أي مكتبات خارجية)",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test:qr": "node test/qr-dump.js > test/qr.json && python3 test/qr-verify.py test/qr.json"
+  }
+}
