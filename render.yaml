@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: gym-system
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.13.0
+      - key: TZ_NAME
+        value: Africa/Cairo
+      - key: GYM_NAME
+        value: الجيم
+      - key: ADMIN_PASSWORD
+        value: admin123
+      - key: STAFF_PASSWORD
+        value: staff123
