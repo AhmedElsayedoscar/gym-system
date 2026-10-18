@@ -894,7 +894,18 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
 };
-function serveStatic(req, res, pathname) {
+
+// الملفات المتاحة للعموم (العضو) بدون تسجيل دخول — كارنيه + تسجيل دخول فقط
+const CARD_PUBLIC_FILES = new Set([
+  'card.html',   // صفحة الكارنيه (للمشترك)
+  'card.js',     // سكريبت الكارنيه
+  'common.js',   // مشترك بين الصفحات
+  'style.css',   // التنسيق
+  'login.html',  // صفحة تسجيل الدخول (لازم تكون متاحة)
+  'login.js',    // سكريبت تسجيل الدخول
+]);
+
+function serveStatic(req, res, pathname, session) {
   let rel = pathname === '/' ? '/index.html' : pathname;
   let file;
   try {
@@ -907,6 +918,17 @@ function serveStatic(req, res, pathname) {
     res.writeHead(403).end();
     return;
   }
+
+  // الملف في قائمة الكارنيه العامة؟ متاح للجميع
+  const basename = path.basename(file);
+  const isPublicCardFile = CARD_PUBLIC_FILES.has(basename);
+
+  if (!isPublicCardFile && !session) {
+    // المستخدم لا يملك جلسة صالحة ويحاول الوصول لصفحة مقيدة
+    res.writeHead(302, { Location: '/login.html' }).end();
+    return;
+  }
+
   fs.readFile(file, (err, buf) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('غير موجود');
@@ -958,7 +980,9 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new ApiError(405, 'غير مسموح');
-      return serveStatic(req, res, url.pathname);
+      // نحسب الجلسة هنا عشان نمررها لـ serveStatic لتحديد الصلاحية
+      const pageSession = verify(parseCookies(req).sid);
+      return serveStatic(req, res, url.pathname, pageSession);
     }
     const r = routes.find((x) => x.method === req.method && x.re.test(url.pathname));
     if (!r) throw new ApiError(404, 'غير موجود');
