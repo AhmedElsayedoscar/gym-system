@@ -398,11 +398,11 @@ function editMemberModal(m, done) {
 }
 
 function openWhatsAppModal(m) {
-  const cardUrl = `${location.origin}/card.html?code=${encodeURIComponent(m.code)}`;
   const planInfo = m.sub && m.sub.plan_name ? m.sub.plan_name : 'عضوية عامة';
   const endDate = m.sub && m.sub.end_date ? m.sub.end_date : 'غير محدد';
   const gym = ME.gymName || 'الجيم';
 
+  // رسالة الواتساب بدون رابط لوكال هوست إطلاقاً، ومجهزة لإرسال صورة الكارت
   const defaultMsg = `مرحباً بك يا ${m.name} في ${gym} 🏋️‍♂️✨
 
 تم تسجيل عضويتك بنجاح! تفاصيل الاشتراك:
@@ -410,68 +410,137 @@ function openWhatsAppModal(m) {
 📋 نوع الباقة: ${planInfo}
 📅 تاريخ انتهاء الاشتراك: ${endDate}
 
-📲 رابط كارت العضوية والـ QR كود الخاص بك:
-${cardUrl}
-
-💡 يمكنك فتح الرابط وحفظ الكارت على هاتفك، وإبراز الـ QR كود عند مكتب الاستقبال لتسجيل حضورك في كل تمرين.
+🪪 مرفق صورة كارت العضوية والـ QR كود الخاص بك للدخول ✨
+(يرجى حفظ صورة الكارت على هاتفك، وإبراز كود الـ QR عند مكتب الاستقبال لتسجيل حضورك في كل تمرين)
 
 نتمنى لك وقتاً ممتعاً وتدريباً موفقاً! 💪🔥`;
 
   const phoneInput = h('input', { type: 'tel', value: m.phone || '', placeholder: 'مثال: 01012345678', class: 'ltr' });
-  const msgBox = h('textarea', { rows: 8, style: 'font-size:0.85rem;resize:vertical' }, defaultMsg);
+  const msgBox = h('textarea', { rows: 7, style: 'font-size:0.85rem;resize:vertical' }, defaultMsg);
+
+  let cachedBlob = null;
+  const previewImg = h('img', {
+    alt: `كارت عضوية ${m.name}`,
+    style: 'max-width:100%;height:auto;border-radius:10px;box-shadow:0 3px 10px rgba(0,0,0,0.12);display:none;border:1px solid #e2e8f0;margin:0 auto;'
+  });
+  const loadingStatus = h('div', { class: 'muted', style: 'padding:14px;text-align:center;font-size:0.9rem' }, '⏳ جاري توليد صورة الكارت عالية الدقة...');
+
+  // توليد صورة الكارت في الخلفية فور فتح المودال
+  renderMemberCardToBlob(m, gym).then((blob) => {
+    cachedBlob = blob;
+    previewImg.src = URL.createObjectURL(blob);
+    previewImg.style.display = 'block';
+    loadingStatus.style.display = 'none';
+  }).catch((err) => {
+    console.error(err);
+    loadingStatus.textContent = 'تعذر تجهيز معاينة الصورة: ' + err.message;
+  });
+
+  const previewBox = h('div', {
+    style: 'background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:12px;text-align:center;'
+  },
+    h('div', { style: 'font-weight:700;margin-bottom:8px;font-size:0.9rem;color:var(--brand-dark)' }, '🖼️ صورة كارت العضوية الرقمي:'),
+    loadingStatus,
+    previewImg,
+    h('div', { style: 'font-size:0.8rem;color:#16a34a;font-weight:600;margin-top:8px' }, '💡 سيتم نسخ هذه الصورة تلقائياً للحافظة لتلصقها في واتساب (Ctrl+V)')
+  );
+
+  const canShare = !!(navigator.canShare && window.File);
 
   openModal(
-    'إرسال كارت العضوية عبر واتساب',
+    'إرسال صورة كارت العضوية عبر واتساب',
     [
+      previewBox,
       field('رقم موبايل العضو', phoneInput),
-      field('نص رسالة الواتساب', msgBox),
+      field('نص الرسالة المصاحبة للكارت', msgBox),
       h(
         'div',
-        { class: 'actions', style: 'margin-top:10px' },
+        { class: 'actions', style: 'margin-top:10px;flex-wrap:wrap;gap:8px' },
         h(
           'button',
           {
             type: 'button',
             class: 'btn',
-            onclick: () => {
-              navigator.clipboard.writeText(msgBox.value);
-              toast('تم نسخ نص الرسالة إلى الحافظة');
+            onclick: async () => {
+              if (!cachedBlob) {
+                toast('جاري تجهيز الصورة، انتظر ثانية...', true);
+                cachedBlob = await renderMemberCardToBlob(m, gym);
+              }
+              const copied = await copyCardImageToClipboard(cachedBlob);
+              if (copied) {
+                toast('✅ تم نسخ صورة الكارت! اضغط Ctrl+V في واتساب');
+              } else {
+                downloadCardBlob(cachedBlob, `card-${m.code}.png`);
+                toast('تم تحميل صورة الكارت لجهازك 💾');
+              }
             },
           },
-          '📋 نسخ نص الرسالة'
+          '📋 نسخ صورة الكارت (Ctrl+V)'
         ),
         h(
           'button',
           {
             type: 'button',
             class: 'btn',
-            onclick: () => {
-              navigator.clipboard.writeText(cardUrl);
-              toast('تم نسخ رابط الكارت إلى الحافظة');
+            onclick: async () => {
+              if (!cachedBlob) cachedBlob = await renderMemberCardToBlob(m, gym);
+              downloadCardBlob(cachedBlob, `card-${m.code}.png`);
+              toast('تم تحميل صورة الكارت 💾');
             },
           },
-          '🔗 نسخ رابط الكارت'
+          '💾 حفظ الصورة (PNG)'
+        ),
+        canShare && h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn',
+            onclick: async () => {
+              if (!cachedBlob) cachedBlob = await renderMemberCardToBlob(m, gym);
+              const file = new File([cachedBlob], `card-${m.code}.png`, { type: 'image/png' });
+              if (navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                  title: `كارت عضوية ${m.name}`,
+                  text: msgBox.value,
+                  files: [file],
+                });
+              }
+            },
+          },
+          '📤 مشاركة الصورة'
         ),
         h(
           'a',
           {
             class: 'btn',
-            href: cardUrl,
+            href: `/card.html?code=${encodeURIComponent(m.code)}`,
             target: '_blank',
             rel: 'noopener',
           },
-          '🖨️ فتح الكارت / طباعة'
+          '🖨️ صفحة الكارت والطباعة'
         )
       ),
     ],
     async () => {
       const p = formatWhatsAppPhone(phoneInput.value);
       if (!p) throw new Error('يرجى إدخال رقم موبايل صحيح للعضو');
+
+      // 1. نسخ صورة الكارت للحافظة
+      if (!cachedBlob) {
+        cachedBlob = await renderMemberCardToBlob(m, gym);
+      }
+      if (cachedBlob) {
+        await copyCardImageToClipboard(cachedBlob);
+        // حفظ نسخة في مجلد التنزيلات
+        downloadCardBlob(cachedBlob, `card-${m.code}.png`);
+      }
+
+      // 2. فتح واتساب بالرسالة
       const waUrl = `https://wa.me/${p}?text=${encodeURIComponent(msgBox.value)}`;
       window.open(waUrl, '_blank', 'noopener,noreferrer');
-      toast('تم فتح محادثة واتساب');
+      toast('✅ تم نسخ صورة الكارنيه للحافظة! اضغط Ctrl + V (لصق) في واتساب لإرسال الصورة فوراً 🖼️');
     },
-    '💬 فتح محادثة واتساب الآن'
+    '💬 فتح واتساب وإرسال صورة الكارت'
   );
 }
 
@@ -882,15 +951,21 @@ async function pageReminders() {
               else if (days === 1) dStr = 'غداً';
               else if (days === 2) dStr = 'يومين';
               else if (days < 0) dStr = `منتهي منذ ${Math.abs(days)} يوم`;
-              const cardUrl = `${location.origin}/card.html?code=${encodeURIComponent(m.code)}`;
-              return (template || '')
+              const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+              const cardUrl = isLocal ? '' : `${location.origin}/card.html?code=${encodeURIComponent(m.code)}`;
+              let resMsg = (template || '')
                 .replace(/{name}/g, m.name)
                 .replace(/{code}/g, m.code)
                 .replace(/{gym}/g, gymName)
                 .replace(/{plan}/g, m.plan_name)
                 .replace(/{end_date}/g, m.end_date || '-')
-                .replace(/{days_left}/g, dStr)
-                .replace(/{card_url}/g, cardUrl);
+                .replace(/{days_left}/g, dStr);
+              if (cardUrl) {
+                resMsg = resMsg.replace(/{card_url}/g, cardUrl);
+              } else {
+                resMsg = resMsg.replace(/\n?📲 كارت العضوية والـ QR الخاص بك:\n?{card_url}/g, '').replace(/{card_url}/g, '');
+              }
+              return resMsg;
             }
 
             async function logAndMark(btn) {

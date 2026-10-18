@@ -120,8 +120,7 @@ async function shareOrSaveCard() {
 }
 
 function getWhatsAppMessage(m, gym) {
-  const cardUrl = `${location.origin}/card.html?code=${encodeURIComponent(m.code)}`;
-  const planInfo = m.sub && m.sub.plan_name ? m.sub.plan_name : 'عضوية';
+  const planInfo = m.sub && m.sub.plan_name ? m.sub.plan_name : 'عضوية عامة';
   const endDate = m.sub && m.sub.end_date ? m.sub.end_date : 'غير محدد';
 
   return `مرحباً بك يا ${m.name} في ${gym} 🏋️‍♂️✨
@@ -131,15 +130,13 @@ function getWhatsAppMessage(m, gym) {
 📋 نوع الباقة: ${planInfo}
 📅 تاريخ انتهاء الاشتراك: ${endDate}
 
-📲 رابط كارت العضوية والـ QR كود الخاص بك:
-${cardUrl}
-
-💡 يمكنك فتح الرابط وحفظ الكارت على هاتفك، وإبراز الـ QR كود عند مكتب الاستقبال لتسجيل حضورك في كل تمرين.
+🪪 مرفق صورة كارت العضوية والـ QR كود الخاص بك للدخول ✨
+(يرجى حفظ صورة الكارت على هاتفك، وإبراز كود الـ QR عند مكتب الاستقبال لتسجيل حضورك في كل تمرين)
 
 نتمنى لك وقتاً ممتعاً وتدريباً موفقاً! 💪🔥`;
 }
 
-function sendViaWhatsApp(m) {
+async function sendViaWhatsApp(m) {
   let phone = formatWhatsAppPhone(m.phone);
   if (!phone) {
     const inputPhone = prompt(`العضو "${m.name}" ليس لديه رقم موبايل مسجل. أدخل رقم الموبايل لإرسال الكارت عبر واتساب:`);
@@ -151,10 +148,21 @@ function sendViaWhatsApp(m) {
     }
   }
 
+  // تجهيز ونسخ صورة الكارت للحافظة وتحميلها
+  try {
+    const blob = await renderCardToBlob();
+    if (blob) {
+      await copyCardImageToClipboard(blob);
+      downloadCardBlob(blob, `card-${m.code}.png`);
+    }
+  } catch (err) {
+    console.warn('Render card error:', err);
+  }
+
   const msg = getWhatsAppMessage(m, currentGymName);
   const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
   window.open(waUrl, '_blank', 'noopener,noreferrer');
-  toast('جاري فتح واتساب لإرسال الكارت...');
+  toast('✅ تم نسخ صورة الكارنيه للحافظة! اضغط Ctrl + V في واتساب لإرسال الصورة فوراً 🖼️');
 }
 
 async function renderCardToBlob() {
