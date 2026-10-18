@@ -4,61 +4,123 @@ let currentMember = null;
 let currentGymName = 'الجيم';
 let qrImageElement = null;
 
+// زر الطباعة
 document.getElementById('print').addEventListener('click', () => window.print());
-document.getElementById('close').addEventListener('click', () => {
-  window.close();
-  if (!window.closed) location.href = '/';
-});
 
-document.getElementById('wa-send').addEventListener('click', () => {
-  if (!currentMember) return;
-  sendViaWhatsApp(currentMember);
-});
+// أزرار الاستقبال (Staff Only)
+const closeBtn = document.getElementById('close');
+if (closeBtn) {
+  closeBtn.addEventListener('click', () => {
+    window.close();
+    if (!window.closed) location.href = '/';
+  });
+}
 
-document.getElementById('dl-img').addEventListener('click', async () => {
+const waSendBtn = document.getElementById('wa-send');
+if (waSendBtn) {
+  waSendBtn.addEventListener('click', () => {
+    if (!currentMember) return;
+    sendViaWhatsApp(currentMember);
+  });
+}
+
+const copyImgBtn = document.getElementById('copy-img');
+if (copyImgBtn) {
+  copyImgBtn.addEventListener('click', async () => {
+    if (!currentMember) return;
+    try {
+      const blob = await renderCardToBlob();
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        toast('تم نسخ صورة الكارت (يمكنك الضغط على Ctrl+V في واتساب)');
+      } else {
+        toast('المتصفح لا يدعم نسخ الصور مباشرة، اضغط على تحميل الكارنيه', true);
+      }
+    } catch (e) {
+      toast('فشل نسخ الصورة: ' + e.message, true);
+    }
+  });
+}
+
+const copyLinkBtn = document.getElementById('copy-link');
+if (copyLinkBtn) {
+  copyLinkBtn.addEventListener('click', async () => {
+    if (!currentMember) return;
+    const link = `${location.origin}/card.html?code=${encodeURIComponent(currentMember.code)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      toast('تم نسخ رابط الكارت بنجاح');
+    } catch {
+      toast('فشل نسخ الرابط', true);
+    }
+  });
+}
+
+// زر التحميل الرئيسي (يعمل للجميع وللمشترك)
+const dlBtn = document.getElementById('dl-img');
+if (dlBtn) {
+  dlBtn.addEventListener('click', downloadCard);
+}
+
+// زر المشاركة وحفظ في الصور (للهواتف المحمولة)
+const shareBtn = document.getElementById('share-btn');
+if (shareBtn) {
+  if (navigator.share) {
+    shareBtn.style.display = '';
+    shareBtn.addEventListener('click', shareOrSaveCard);
+  } else {
+    shareBtn.style.display = 'none';
+  }
+}
+
+async function downloadCard() {
   if (!currentMember) return;
+  const btn = document.getElementById('dl-img');
+  const origText = btn.textContent;
   try {
+    btn.textContent = '⏳ جاري التجهيز...';
+    btn.disabled = true;
     const blob = await renderCardToBlob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `card-${currentMember.code}.png`;
+    document.body.appendChild(a);
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    toast('تم تحميل كارت العضوية بنجاح');
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('تم بدء تحميل كارت العضوية بنجاح 💾');
   } catch (e) {
     toast('فشل تصدير الصورة: ' + e.message, true);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
   }
-});
+}
 
-document.getElementById('copy-img').addEventListener('click', async () => {
+async function shareOrSaveCard() {
   if (!currentMember) return;
   try {
     const blob = await renderCardToBlob();
-    if (navigator.clipboard && window.ClipboardItem) {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      toast('تم نسخ صورة الكارت (يمكنك الآن الضغط على Ctrl+V في واتساب)');
-    } else {
-      toast('المتصفح لا يدعم نسخ الصور مباشرة، اضغط على حفظ كصورة', true);
+    const file = new File([blob], `card-${currentMember.code}.png`, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        title: `كارت عضوية ${currentMember.name}`,
+        text: `كارت عضوية ${currentMember.name} في ${currentGymName}`,
+        files: [file],
+      });
+      toast('تمت المشاركة بنجاح');
+      return;
     }
-  } catch (e) {
-    toast('فشل نسخ الصورة: ' + e.message, true);
+  } catch (err) {
+    if (err.name === 'AbortError') return;
   }
-});
-
-document.getElementById('copy-link').addEventListener('click', async () => {
-  if (!currentMember) return;
-  const link = `${location.origin}/card.html?code=${currentMember.code}`;
-  try {
-    await navigator.clipboard.writeText(link);
-    toast('تم نسخ رابط الكارت بنجاح');
-  } catch {
-    toast('فشل نسخ الرابط', true);
-  }
-});
+  // إذا لم تنجح المشاركة، يتم التنزيل العادي كبديل
+  downloadCard();
+}
 
 function getWhatsAppMessage(m, gym) {
-  const cardUrl = `${location.origin}/card.html?code=${m.code}`;
+  const cardUrl = `${location.origin}/card.html?code=${encodeURIComponent(m.code)}`;
   const planInfo = m.sub && m.sub.plan_name ? m.sub.plan_name : 'عضوية';
   const endDate = m.sub && m.sub.end_date ? m.sub.end_date : 'غير محدد';
 
@@ -102,6 +164,15 @@ async function renderCardToBlob() {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
+
+  // التأكد من اكتمال تحميل صورة الـ QR
+  if (qrImageElement && (!qrImageElement.complete || qrImageElement.naturalWidth === 0)) {
+    await new Promise((resolve) => {
+      qrImageElement.onload = resolve;
+      qrImageElement.onerror = resolve;
+      setTimeout(resolve, 1500);
+    });
+  }
 
   // خلفية الكارت البيضاء مع حواف ناعمة
   ctx.fillStyle = '#ffffff';
@@ -200,7 +271,7 @@ async function renderCardToBlob() {
   ctx.fillText('يرجى إبراز كود الـ QR عند الدخول لتسجيل الحضور', w - 120, 580);
 
   // رسم الـ QR كود
-  if (qrImageElement && qrImageElement.complete) {
+  if (qrImageElement) {
     const qrSize = 360;
     const qrX = 120;
     const qrY = 110;
@@ -214,7 +285,11 @@ async function renderCardToBlob() {
     ctx.fill();
     ctx.stroke();
 
-    ctx.drawImage(qrImageElement, qrX, qrY, qrSize, qrSize);
+    try {
+      ctx.drawImage(qrImageElement, qrX, qrY, qrSize, qrSize);
+    } catch {
+      /* ignore drawing error */
+    }
   }
 
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
@@ -228,8 +303,18 @@ async function renderCardToBlob() {
 
   const queryIdent = code || id;
   if (!queryIdent) {
-    box.textContent = 'بيانات العضو غير محددة';
+    box.innerHTML = '<div class="alert bad" style="text-align:center;">بيانات العضو غير محددة بالرابط</div>';
     return;
+  }
+
+  // فحص هل المستخدم مسجل دخول كموظف/مدير لإظهار أزرار الإدارة
+  try {
+    const me = await api('GET', '/api/me');
+    if (me && me.role) {
+      document.querySelectorAll('.staff-only').forEach((el) => (el.style.display = ''));
+    }
+  } catch {
+    // ليس مسجل دخول (المشترك نفسه فاتح الرابط)
   }
 
   try {
@@ -237,9 +322,9 @@ async function renderCardToBlob() {
     try {
       d = await api('GET', `/api/public/card/${encodeURIComponent(queryIdent)}`);
     } catch {
-      // تجربة مسار الأعضاء في حالة تسجيل الدخول
+      // تجربة مسار الأعضاء المعتاد في حالة تسجيل الدخول
       const me = await api('GET', '/api/me');
-      const mem = await api('GET', `/api/members/${queryIdent}`);
+      const mem = await api('GET', `/api/members/${encodeURIComponent(queryIdent)}`);
       d = {
         gymName: me.gymName || 'الجيم',
         name: mem.member.name,
@@ -255,8 +340,17 @@ async function renderCardToBlob() {
     currentGymName = d.gymName || 'الجيم';
     document.title = `كارت ${d.name} (${d.code}) - ${currentGymName}`;
 
+    const titleEl = document.getElementById('gym-title');
+    if (titleEl) {
+      titleEl.textContent = `🏋️‍♂️ ${currentGymName} - كارت العضوية`;
+    }
+
     // تجهيز صورة الـ QR
-    const qrImg = h('img', { src: d.qrUrl || `/api/public/card-qr/${encodeURIComponent(d.code)}`, alt: 'QR' });
+    const qrImg = h('img', {
+      src: d.qrUrl || `/api/public/card-qr/${encodeURIComponent(d.code)}`,
+      alt: 'QR Code',
+      loading: 'eager',
+    });
     qrImageElement = qrImg;
 
     const plan = (d.sub && d.sub.plan_name) || 'عضوية عامة';
@@ -286,6 +380,6 @@ async function renderCardToBlob() {
       )
     );
   } catch (e) {
-    box.textContent = e.message;
+    box.innerHTML = `<div class="alert bad" style="text-align:center;">${e.message || 'تعذر تحميل بيانات الكارت'}</div>`;
   }
 })();

@@ -264,9 +264,25 @@ body.scan { background: var(--ink); color: #fff; min-height: 100vh; }
 
 /* ---------- كارت العضو للطباعة والواتساب ---------- */
 body.cardpage { background: #f0f2f5; min-height: 100vh; }
-.print-bar { max-width: 680px; margin: 16px auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; padding: 0 10px; }
-.print-bar .btn { font-size: 0.9rem; padding: 8px 14px; }
+.card-header-bar {
+  text-align: center;
+  padding: 16px 12px 6px;
+}
+.card-gym-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--brand-dark);
+}
+.print-bar { max-width: 680px; margin: 12px auto; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; padding: 0 12px; }
+.print-bar .btn { font-size: 0.95rem; padding: 8px 16px; border-radius: 8px; }
+.print-bar .btn-large {
+  font-size: 1.05rem;
+  padding: 10px 22px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+}
 .card-wrapper { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px; }
+.card-loading { padding: 30px; text-align: center; color: var(--muted); font-size: 1.1rem; }
 .member-card {
   width: 86mm;
   height: 54mm;
@@ -288,11 +304,11 @@ body.cardpage { background: #f0f2f5; min-height: 100vh; }
 .member-card .cd { font-size: 11pt; font-weight: 800; color: #111827; letter-spacing: 0.5px; }
 .member-card .qr { width: 34mm; padding: 3mm 3mm 3mm 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .member-card .qr img { width: 100%; display: block; border-radius: 2mm; }
-.card-mobile-hint { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 12px; }
+.card-mobile-hint { text-align: center; color: var(--muted); font-size: 0.88rem; margin-top: 14px; max-width: 450px; line-height: 1.5; padding: 0 10px; }
 
 @media print {
   body.cardpage { background: #fff; }
-  .print-bar, .card-mobile-hint { display: none !important; }
+  .card-header-bar, .print-bar, .card-mobile-hint { display: none !important; }
   .member-card { box-shadow: none; margin: 0 auto; break-inside: avoid; }
   @page { margin: 10mm; }
 }
