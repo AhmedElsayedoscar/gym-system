@@ -21,7 +21,9 @@ async function api(method, url, body) {
   } catch {
     /* ignore */
   }
-  if (res.status === 401 && !url.endsWith('/api/login') && !url.startsWith('/api/public/')) {
+  // لا تعيد توجيه صفحة الكارنيه (بدون session للمشتركين)
+  const onCardPage = window.location.pathname === '/card.html';
+  if (res.status === 401 && !url.endsWith('/api/login') && !url.startsWith('/api/public/') && !onCardPage) {
     location.href = '/login.html';
     throw new Error('سجّل دخول الأول');
   }

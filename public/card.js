@@ -272,6 +272,12 @@ async function renderCardToBlob() {
 
   // رسم الـ QR كود
   if (qrImageElement) {
+    if (!qrImageElement.complete) {
+      await new Promise((resolve) => {
+        qrImageElement.onload = resolve;
+        qrImageElement.onerror = resolve;
+      });
+    }
     const qrSize = 360;
     const qrX = 120;
     const qrY = 110;
@@ -308,10 +314,15 @@ async function renderCardToBlob() {
   }
 
   // فحص هل المستخدم مسجل دخول كموظف/مدير لإظهار أزرار الإدارة
+  let isStaff = false;
   try {
-    const me = await api('GET', '/api/me');
-    if (me && me.role) {
-      document.querySelectorAll('.staff-only').forEach((el) => (el.style.display = ''));
+    const meResp = await fetch('/api/me', { credentials: 'same-origin' });
+    if (meResp.ok) {
+      const me = await meResp.json();
+      if (me && me.role) {
+        isStaff = true;
+        document.querySelectorAll('.staff-only').forEach((el) => (el.style.display = ''));
+      }
     }
   } catch {
     // ليس مسجل دخول (المشترك نفسه فاتح الرابط)
@@ -321,19 +332,23 @@ async function renderCardToBlob() {
     let d;
     try {
       d = await api('GET', `/api/public/card/${encodeURIComponent(queryIdent)}`);
-    } catch {
-      // تجربة مسار الأعضاء المعتاد في حالة تسجيل الدخول
-      const me = await api('GET', '/api/me');
-      const mem = await api('GET', `/api/members/${encodeURIComponent(queryIdent)}`);
-      d = {
-        gymName: me.gymName || 'الجيم',
-        name: mem.member.name,
-        code: mem.member.code,
-        phone: mem.member.phone,
-        active: mem.member.active,
-        sub: mem.member.sub,
-        qrUrl: `/api/members/${mem.member.id}/qr.svg`,
-      };
+    } catch (err) {
+      if (isStaff) {
+        // تجربة مسار الأعضاء المعتاد في حالة تسجيل الدخول
+        const me = await api('GET', '/api/me');
+        const mem = await api('GET', `/api/members/${encodeURIComponent(queryIdent)}`);
+        d = {
+          gymName: me.gymName || 'الجيم',
+          name: mem.member.name,
+          code: mem.member.code,
+          phone: mem.member.phone,
+          active: mem.member.active,
+          sub: mem.member.sub,
+          qrUrl: `/api/members/${mem.member.id}/qr.svg`,
+        };
+      } else {
+        throw err;
+      }
     }
 
     currentMember = d;
