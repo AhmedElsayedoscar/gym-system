@@ -1626,10 +1626,115 @@ async function pageSettings() {
     )
   );
 
+  // كارت النسخ الاحتياطي وحماية البيانات
+  const backupCard = h('div', { class: 'card', style: 'margin-bottom:20px;' });
+  async function renderBackupSection() {
+    try {
+      const status = await api('GET', '/api/backup/status');
+      const backupBtn = h('button', { class: 'btn primary' }, '⚡ أخذ نسخة احتياطية الآن');
+      const downloadBtn = h('a', { class: 'btn', href: '/api/backup/download', target: '_blank', download: '' }, '💾 تحميل نسخة لجهازك / فلاشة');
+      const restoreInput = h('input', { type: 'file', accept: '.db,.sqlite', style: 'display:none' });
+      const restoreBtn = h('button', { class: 'btn danger' }, '🔄 استرجاع نسخة احتياطية');
+
+      backupBtn.onclick = async () => {
+        backupBtn.disabled = true;
+        try {
+          const res = await api('POST', '/api/backup/now', {});
+          toast(res.message || 'تم عمل نسخة احتياطية بنجاح');
+          renderBackupSection();
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          backupBtn.disabled = false;
+        }
+      };
+
+      restoreBtn.onclick = () => restoreInput.click();
+
+      restoreInput.onchange = async () => {
+        const file = restoreInput.files[0];
+        if (!file) return;
+        if (!confirm(`⚠️ تحذير هـام جداً:\n\nاسترجاع ملف النسخة الاحتياطية (${file.name}) سيستبدل جميع بيانات الجيم الحالية بالبيانات الموجودة في الملف.\n\nهل أنت متأكد من المتابعة والاسترجاع؟`)) {
+          restoreInput.value = '';
+          return;
+        }
+        toast('جاري استرجاع قاعدة البيانات...');
+        try {
+          const buf = await file.arrayBuffer();
+          const res = await fetch('/api/backup/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: buf,
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'فشل الاسترجاع');
+          alert('✅ ' + (data.message || 'تم استرجاع قاعدة البيانات بنجاح!'));
+          location.reload();
+        } catch (e) {
+          alert('❌ ' + e.message);
+        } finally {
+          restoreInput.value = '';
+        }
+      };
+
+      const backupsTable = status.recentBackups && status.recentBackups.length
+        ? h('div', { class: 'table-wrap', style: 'margin-top:14px;max-height:220px;overflow-y:auto;' },
+            h('table', null,
+              h('thead', null,
+                h('tr', null,
+                  h('th', null, 'اسم النسخة'),
+                  h('th', null, 'الحجم'),
+                  h('th', null, 'تاريخ ووقت الحفظ')
+                )
+              ),
+              h('tbody', null,
+                status.recentBackups.map(b =>
+                  h('tr', null,
+                    h('td', { class: 'mono', style: 'color:#ffd778;font-size:0.88rem' }, b.name),
+                    h('td', null, `${Math.round(b.size / 1024)} كيلوبايت`),
+                    h('td', { class: 'muted', style: 'font-size:0.85rem' }, fmtDateTime(b.mtime))
+                  )
+                )
+              )
+            )
+          )
+        : h('div', { class: 'muted', style: 'margin-top:10px;font-size:0.9rem' }, 'لا توجد نسخ احتياطية مسجلة بعد.');
+
+      backupCard.replaceChildren(
+        h('h2', { style: 'color:#ffd778;display:flex;align-items:center;gap:8px;' }, '💾 النسخ الاحتياطي وحماية البيانات من الضياع'),
+        h('p', { class: 'muted', style: 'font-size:0.92rem;margin-bottom:14px;line-height:1.7' },
+          'يقوم السيستم بعمل نسخ احتياطي تلقائي يومياً. لحماية بياناتك من سقوط نسخة الويندوز أو تلف الجهاز، يمكنك تحميل نسخة احتياطية يدوياً بضغطة زر أو حفظها في بارتشن آخر / فلاشة خارجية.'
+        ),
+        h('div', { class: 'row', style: 'gap:10px;align-items:center;margin-bottom:14px;' },
+          backupBtn,
+          downloadBtn,
+          restoreBtn,
+          restoreInput
+        ),
+        h('div', { style: 'background:rgba(20,24,35,0.7);border:1px solid rgba(229,169,60,0.2);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:0.9rem;' },
+          h('div', { style: 'margin-bottom:6px' }, h('b', { style: 'color:#cbd5e1' }, '📁 مسار النسخ التلقائي: '), h('code', { class: 'mono', style: 'color:#ffd778' }, status.primaryDir)),
+          status.secondaryDir
+            ? h('div', null, h('b', { style: 'color:#4ade80' }, '🛡️ مسار الحماية الإضافي (بارتشن آمن): '), h('code', { class: 'mono', style: 'color:#4ade80' }, status.secondaryDir))
+            : ''
+        ),
+        h('h3', { style: 'font-size:0.95rem;margin:14px 0 6px;' }, '🕒 آخر النسخ الاحتياطية المحفوظة تلقائياً:'),
+        backupsTable,
+        h('div', { style: 'background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:10px;padding:12px 16px;margin-top:14px;font-size:0.88rem;color:#bfdbfe;line-height:1.7;' },
+          '💡 ', h('b', null, 'نصيحة ذهبية للحفظ السحابي المجاني:'),
+          ' يمكنك تثبيت برنامج Google Drive أو OneDrive على الكمبيوتر، وتحديد مجلد النسخ الاحتياطية ليتزامن معه. بذلك سيتم رفع كل نسخة احتياطية تلقائياً وبأمان على حسابك في جوجل دون أي مجهود منك!'
+        )
+      );
+    } catch (e) {
+      backupCard.replaceChildren(h('div', { class: 'alert bad' }, 'تعذر تحميل حالة النسخ الاحتياطي: ' + e.message));
+    }
+  }
+  renderBackupSection();
+
   app.replaceChildren(
     h('div', { class: 'page-head' },
-      h('h1', null, '⚙️ إعدادات كلمات المرور والأمان')
+      h('h1', null, '⚙️ الإعدادات وحماية البيانات')
     ),
+    backupCard,
     adminCard,
     staffCard,
     infoCard

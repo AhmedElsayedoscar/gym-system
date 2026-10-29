@@ -915,6 +915,208 @@ route('POST', '/api/settings/change-admin-password', 'admin', (ctx) => {
   return { ok: true, message: 'تم تغيير كلمة مرور المدير (Admin) بنجاح' };
 });
 
+// ---------- نظام النسخ الاحتياطي وحماية البيانات ----------
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
+
+function getSecondaryBackupDir() {
+  const customPath = getSetting('backup_external_dir', '').trim();
+  if (customPath && fs.existsSync(customPath)) return customPath;
+
+  const candidateDrives = ['F:\\', 'D:\\', 'E:\\', 'A:\\', 'N:\\'];
+  for (const drv of candidateDrives) {
+    try {
+      if (fs.existsSync(drv)) {
+        const secPath = path.join(drv, 'gym-backups');
+        fs.mkdirSync(secPath, { recursive: true });
+        return secPath;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+function cleanupOldBackups(dir, keepCount = 30) {
+  try {
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.db'))
+      .map((f) => {
+        const fp = path.join(dir, f);
+        return { name: f, path: fp, time: fs.statSync(fp).mtimeMs };
+      })
+      .sort((a, b) => b.time - a.time);
+
+    if (files.length > keepCount) {
+      for (const f of files.slice(keepCount)) {
+        try {
+          fs.unlinkSync(f.path);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function createLocalBackup(prefix = 'gym-backup') {
+  // تفريغ الـ WAL لحظياً إلى ملف gym.db لضمان نسخ أحدث العمليات
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-CA', { timeZone: TZ });
+  const timeStr = now
+    .toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' })
+    .replace(':', '-');
+  const filename = `${prefix}-${dateStr}_${timeStr}.db`;
+
+  const srcDb = path.join(DATA_DIR, 'gym.db');
+  const destPrimary = path.join(BACKUP_DIR, filename);
+
+  fs.copyFileSync(srcDb, destPrimary);
+
+  let secondaryPath = null;
+  const secDir = getSecondaryBackupDir();
+  if (secDir) {
+    try {
+      secondaryPath = path.join(secDir, filename);
+      fs.copyFileSync(srcDb, secondaryPath);
+    } catch (e) {
+      console.warn('Failed secondary backup:', e.message);
+    }
+  }
+
+  cleanupOldBackups(BACKUP_DIR, 30);
+  if (secDir) cleanupOldBackups(secDir, 30);
+
+  return {
+    filename,
+    primary: destPrimary,
+    secondary: secondaryPath,
+    size: fs.statSync(destPrimary).size,
+  };
+}
+
+let lastAutoBackupDay = '';
+function checkAndRunAutoBackup() {
+  const today = todayStr();
+  if (lastAutoBackupDay !== today) {
+    try {
+      createLocalBackup('gym-auto-backup');
+      lastAutoBackupDay = today;
+      console.log(`[Backup] تم إنشاء نسخة احتياطية تلقائية ليوم ${today}`);
+    } catch (e) {
+      console.error('[Backup Error]:', e.message);
+    }
+  }
+}
+
+// تنزيل ملف قاعدة البيانات الحالي مباشرة (للحفظ على فلاشة أو هاتف)
+route('GET', '/api/backup/download', 'admin', () => {
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  const srcDb = path.join(DATA_DIR, 'gym.db');
+  const buf = fs.readFileSync(srcDb);
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-CA', { timeZone: TZ });
+  const timeStr = now
+    .toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' })
+    .replace(':', '-');
+  const filename = `gym-backup-${dateStr}_${timeStr}.db`;
+
+  return {
+    raw: buf,
+    type: 'application/octet-stream',
+    headers: {
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': Buffer.byteLength(buf),
+    },
+  };
+});
+
+// أخذ نسخة احتياطية وحفظها محلياً الآن
+route('POST', '/api/backup/now', 'admin', () => {
+  const res = createLocalBackup('gym-manual-backup');
+  return {
+    ok: true,
+    message: 'تم عمل نسخة احتياطية بنجاح',
+    ...res,
+  };
+});
+
+// حالة النسخ الاحتياطي وسجل النسخ الموجودة
+route('GET', '/api/backup/status', 'admin', () => {
+  const secDir = getSecondaryBackupDir();
+  let files = [];
+  try {
+    files = fs
+      .readdirSync(BACKUP_DIR)
+      .filter((f) => f.endsWith('.db'))
+      .map((f) => {
+        const p = path.join(BACKUP_DIR, f);
+        const st = fs.statSync(p);
+        return {
+          name: f,
+          size: st.size,
+          mtime: new Date(st.mtimeMs).toISOString(),
+        };
+      })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime))
+      .slice(0, 15);
+  } catch {
+    /* ignore */
+  }
+
+  const dbPath = path.join(DATA_DIR, 'gym.db');
+  const currentDbSize = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+
+  return {
+    primaryDir: BACKUP_DIR,
+    secondaryDir: secDir,
+    currentDbSize,
+    recentBackups: files,
+    lastBackup: files[0] || null,
+  };
+});
+
+// استرجاع نسخة احتياطية من ملف مرفوع
+route('POST', '/api/backup/restore', 'admin', (ctx) => {
+  const buf = ctx.body._rawBuffer;
+  if (!buf || buf.length < 100) {
+    throw new ApiError(400, 'الملف المرفوع فارغ أو غير صحيح');
+  }
+
+  const header = buf.slice(0, 16).toString('utf8');
+  if (!header.startsWith('SQLite format 3')) {
+    throw new ApiError(400, 'الملف المرفوع ليس قاعدة بيانات SQLite صحيحة');
+  }
+
+  const curDbPath = path.join(DATA_DIR, 'gym.db');
+  const safetyCopy = path.join(DATA_DIR, `gym.db.safety-${Date.now()}`);
+  if (fs.existsSync(curDbPath)) {
+    try {
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+      fs.copyFileSync(curDbPath, safetyCopy);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  fs.writeFileSync(curDbPath, buf);
+
+  // حذف ملفات WAL القديمة
+  try { if (fs.existsSync(curDbPath + '-wal')) fs.unlinkSync(curDbPath + '-wal'); } catch {}
+  try { if (fs.existsSync(curDbPath + '-shm')) fs.unlinkSync(curDbPath + '-shm'); } catch {}
+
+  return {
+    ok: true,
+    message: 'تم استرجاع قاعدة البيانات بنجاح! تم حفظ البيانات وتحديث السيستم.',
+  };
+});
+
 
 // ---------- الملفات الثابتة ----------
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -979,24 +1181,33 @@ function serveStatic(req, res, pathname, session) {
 }
 
 // ---------- السيرفر ----------
-function readBody(req) {
+function readBody(req, limit = 100 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 100 * 1024) {
+      if (size > limit) {
         reject(new ApiError(413, 'الطلب كبير جدًا'));
         req.destroy();
       } else chunks.push(c);
     });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
+      const rawBuf = Buffer.concat(chunks);
+      const ct = (req.headers['content-type'] || '').toLowerCase();
+      if (
+        ct.includes('application/octet-stream') ||
+        ct.includes('application/x-sqlite3') ||
+        ct.includes('multipart/form-data')
+      ) {
+        return resolve({ _rawBuffer: rawBuf });
+      }
       try {
-        const v = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const v = JSON.parse(rawBuf.toString('utf8'));
         resolve(v && typeof v === 'object' ? v : {});
       } catch {
-        reject(new ApiError(400, 'صيغة الطلب غير صحيحة'));
+        resolve({ _rawBuffer: rawBuf });
       }
     });
     req.on('error', reject);
@@ -1032,11 +1243,17 @@ const server = http.createServer(async (req, res) => {
       if (!session) throw new ApiError(401, 'سجّل دخول الأول');
       if (r.role === 'admin' && session.role !== 'admin') throw new ApiError(403, 'الصلاحية للمدير فقط');
     }
-    const body = req.method === 'GET' || req.method === 'DELETE' ? {} : await readBody(req);
+    const isRestore = url.pathname === '/api/backup/restore';
+    const bodyLimit = isRestore ? 50 * 1024 * 1024 : 100 * 1024;
+    const body = req.method === 'GET' || req.method === 'DELETE' ? {} : await readBody(req, bodyLimit);
     const ip = req.socket.remoteAddress || '';
     const out = await r.handler({ req, url, params, body, session, ip });
     if (out && out.raw !== undefined) {
-      res.writeHead(200, { 'Content-Type': out.type, 'Cache-Control': 'no-store' });
+      res.writeHead(200, {
+        'Content-Type': out.type,
+        'Cache-Control': 'no-store',
+        ...(out.headers || {}),
+      });
       return res.end(out.raw);
     }
     if (out && out.body !== undefined) return sendJson(res, 200, out.body, out.headers);
@@ -1056,6 +1273,13 @@ if (require.main === module) {
     }
     if (getAdminPassword() === 'admin123') {
       console.log('ملاحظة: كلمة مرور المدير الافتراضية هي admin123 (يمكن تغييرها من شاشة الإعدادات).');
+    }
+    // تشغيل النسخ الاحتياطي التلقائي عند بدء السيرفر وفحصه دورياً
+    try {
+      checkAndRunAutoBackup();
+      setInterval(checkAndRunAutoBackup, 6 * 3600 * 1000);
+    } catch (e) {
+      console.error('[Backup Init Error]:', e.message);
     }
   });
 }
