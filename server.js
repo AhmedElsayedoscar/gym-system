@@ -4,18 +4,21 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { db, DATA_DIR } = require('./db');
-const { toSvg } = require('./qr');
+const { toBarcode } = require('./qr');
 
 // ---------- الإعدادات ----------
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const TZ = process.env.TZ_NAME || 'Africa/Cairo';
-const GYM_NAME = process.env.GYM_NAME || 'الجيم';
+const GYM_NAME = process.env.GYM_NAME || 'X GYM';
 const SESSION_HOURS = 12;
 const DUPLICATE_WINDOW_MIN = 5; // تجاهل تكرار المسح لنفس العضو خلال هذه المدة
 const EXPIRING_DAYS = 7;
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+function getAdminPassword() {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password');
+  return (row && row.value) || process.env.ADMIN_PASSWORD || 'admin123';
+}
 
 function getStaffPassword() {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('staff_password');
@@ -298,7 +301,7 @@ route('POST', '/api/login', null, (ctx) => {
   checkLoginAllowed(ctx.ip);
   const pw = typeof ctx.body.password === 'string' ? ctx.body.password : '';
   let role = null;
-  if (safeEqual(pw, ADMIN_PASSWORD)) role = 'admin';
+  if (safeEqual(pw, getAdminPassword())) role = 'admin';
   else if (safeEqual(pw, getStaffPassword())) role = 'staff';
   if (!role) {
     recordFailure(ctx.ip);
@@ -322,10 +325,13 @@ route('POST', '/api/logout', null, () => ({
 
 route('GET', '/api/me', 'staff', (ctx) => {
   const isDefaultStaff = getStaffPassword() === 'staff123';
+  const isDefaultAdmin = getAdminPassword() === 'admin123';
   return {
     role: ctx.session.role,
     gymName: GYM_NAME,
-    defaultPasswords: ctx.session.role === 'admin' ? isDefaultStaff : false,
+    defaultPasswords: ctx.session.role === 'admin' ? (isDefaultStaff || isDefaultAdmin) : false,
+    isDefaultAdmin: ctx.session.role === 'admin' ? isDefaultAdmin : false,
+    isDefaultStaff: ctx.session.role === 'admin' ? isDefaultStaff : false,
   };
 });
 
@@ -524,7 +530,7 @@ route('GET', '/api/members/:id/qr.svg', 'staff', (ctx) => {
   const id = intParam(ctx.params.id);
   const m = db.prepare('SELECT code FROM members WHERE id = ?').get(id);
   if (!m) throw new ApiError(404, 'العضو غير موجود');
-  return { raw: toSvg(m.code), type: 'image/svg+xml; charset=utf-8' };
+  return { raw: toBarcode(m.code, { barWidth: 3, height: 100, fontSize: 14 }), type: 'image/svg+xml; charset=utf-8' };
 });
 
 // المسارات العامة لعرض كارت العضوية والـ QR (متاحة للعضو عبر رابط الواتساب بدون تسجيل دخول)
@@ -562,7 +568,7 @@ route('GET', '/api/public/card/:ident', null, (ctx) => {
 route('GET', '/api/public/card-qr/:ident', null, (ctx) => {
   const m = findMemberByIdent(ctx.params.ident);
   if (!m) throw new ApiError(404, 'العضو غير موجود');
-  return { raw: toSvg(m.code), type: 'image/svg+xml; charset=utf-8' };
+  return { raw: toBarcode(m.code, { barWidth: 3, height: 100, fontSize: 14 }), type: 'image/svg+xml; charset=utf-8' };
 });
 
 // الحضور
@@ -650,6 +656,127 @@ route('DELETE', '/api/attendance/:id', 'admin', (ctx) => {
   return { ok: true };
 });
 
+// ---------- تقرير الوردية / التقرير اليومي للاشتراكات والتجديدات ----------
+route('GET', '/api/reports/daily', 'admin', (ctx) => {
+  const dateParam = ctx.url.searchParams.get('date');
+  const targetDate = dateParam ? String(dateParam).trim() : todayStr();
+  if (!validDate(targetDate)) {
+    throw new ApiError(400, 'التاريخ غير صحيح');
+  }
+
+  // نافذة أمان لتغطية فرق التوقيت (Africa/Cairo) مقارنة بـ UTC
+  const windowStart = addDays(targetDate, -1);
+  const windowEnd = addDays(targetDate, 2);
+
+  const rawRows = db
+    .prepare(
+      `SELECT s.id, s.member_id, s.plan_id, s.plan_name, s.start_date, s.end_date, s.price, s.status, s.created_at,
+              m.name AS member_name, m.phone AS member_phone, m.code AS member_code,
+              (SELECT COUNT(*) FROM subscriptions s_prev 
+               WHERE s_prev.member_id = s.member_id 
+                 AND (s_prev.created_at < s.created_at OR (s_prev.created_at = s.created_at AND s_prev.id < s.id))
+              ) AS prev_subs_count
+       FROM subscriptions s
+       JOIN members m ON m.id = s.member_id
+       WHERE s.created_at >= ? AND s.created_at < ?
+       ORDER BY s.created_at DESC, s.id DESC`
+    )
+    .all(windowStart, windowEnd);
+
+  const list = [];
+  let totalRevenue = 0;
+  let newCount = 0;
+  let newRevenue = 0;
+  let renewCount = 0;
+  let renewRevenue = 0;
+  let cancelledCount = 0;
+  let cancelledRevenue = 0;
+
+  for (const row of rawRows) {
+    const rowDate = new Date(row.created_at).toLocaleDateString('en-CA', { timeZone: TZ });
+    if (rowDate !== targetDate) continue;
+
+    const isRenewal = row.prev_subs_count > 0;
+    const isCancelled = row.status === 'cancelled';
+    const price = Number(row.price) || 0;
+
+    if (isCancelled) {
+      cancelledCount++;
+      cancelledRevenue += price;
+    } else {
+      totalRevenue += price;
+      if (isRenewal) {
+        renewCount++;
+        renewRevenue += price;
+      } else {
+        newCount++;
+        newRevenue += price;
+      }
+    }
+
+    list.push({
+      id: row.id,
+      member_id: row.member_id,
+      member_name: row.member_name,
+      member_phone: row.member_phone,
+      member_code: row.member_code,
+      plan_name: row.plan_name,
+      price: price,
+      start_date: row.start_date,
+      end_date: row.end_date,
+      status: row.status,
+      created_at: row.created_at,
+      time: formatTimeInZone(row.created_at),
+      type: isRenewal ? 'renew' : 'new',
+      type_label: isRenewal ? 'تجديد اشتراك' : 'اشتراك جديد',
+    });
+  }
+
+  // عدد الحضور في هذا اليوم
+  const attendanceCount = db
+    .prepare(`SELECT COUNT(DISTINCT member_id) AS c FROM attendance WHERE day = ? AND result = 'ok'`)
+    .get(targetDate).c;
+
+  // جلب ملخص آخر 14 يوم لسرعة التنقل وسجل الأيام السابقة
+  const recentMap = {};
+  const today = todayStr();
+  for (let i = 0; i < 14; i++) {
+    const d = addDays(today, -i);
+    recentMap[d] = { date: d, count: 0, revenue: 0 };
+  }
+  const subRecent = db
+    .prepare(`SELECT price, status, created_at FROM subscriptions WHERE created_at >= ?`)
+    .all(addDays(today, -16));
+
+  for (const s of subRecent) {
+    if (s.status !== 'cancelled') {
+      const d = new Date(s.created_at).toLocaleDateString('en-CA', { timeZone: TZ });
+      if (recentMap[d]) {
+        recentMap[d].count++;
+        recentMap[d].revenue += Number(s.price) || 0;
+      }
+    }
+  }
+  const recentHistory = Object.values(recentMap).sort((a, b) => b.date.localeCompare(a.date));
+
+  return {
+    date: targetDate,
+    today,
+    gymName: GYM_NAME,
+    totalRevenue,
+    totalCount: newCount + renewCount,
+    newCount,
+    newRevenue,
+    renewCount,
+    renewRevenue,
+    cancelledCount,
+    cancelledRevenue,
+    attendanceCount,
+    recentHistory,
+    list,
+  };
+});
+
 // ---------- إعدادات النظام وتنبيهات الواتساب ----------
 function getSetting(key, fallback = '') {
   const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -683,50 +810,6 @@ function formatReminderMessage(template, member, sub, gymName) {
     .replace(/{card_url}/g, cardUrl);
 }
 
-async function sendWhatsAppViaGateway(gatewayUrl, token, phone, message) {
-  let p = phone.replace(/[\s\-\(\)\+]/g, '');
-  if (p.startsWith('00')) p = p.slice(2);
-  if (/^01[0125]\d{8}$/.test(p)) p = '2' + p;
-
-  const url = new URL(gatewayUrl);
-  const isHttps = url.protocol === 'https:';
-  const client = isHttps ? require('https') : require('http');
-
-  return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ phone: p, to: p, message, text: message, body: message });
-    const headers = {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(payload),
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-      headers['x-api-key'] = token;
-    }
-    const req = client.request(
-      url,
-      {
-        method: 'POST',
-        headers,
-        timeout: 12000,
-      },
-      (res) => {
-        let resData = '';
-        res.on('data', (c) => (resData += c));
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve(resData);
-          else reject(new Error(`HTTP ${res.statusCode}: ${resData.slice(0, 100)}`));
-        });
-      }
-    );
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('انتهت مهلة الاتصال بالبوابة'));
-    });
-    req.write(payload);
-    req.end();
-  });
-}
 
 // قائمة الأعضاء للتذكير بالواتساب
 route('GET', '/api/reminders/expiring', 'staff', (ctx) => {
@@ -761,7 +844,6 @@ route('GET', '/api/reminders/expiring', 'staff', (ctx) => {
     list,
     template: getSetting('remind_template'),
     gymName: GYM_NAME,
-    hasGateway: !!getSetting('gateway_url'),
   };
 });
 
@@ -813,75 +895,26 @@ route('POST', '/api/settings/change-staff-password', 'admin', (ctx) => {
   return { ok: true, message: 'تم تغيير كلمة مرور الموظفين (Staff) بنجاح' };
 });
 
-// دالة الإرسال التلقائي المستقلة
-async function runAutomatedReminders() {
-  const gatewayUrl = getSetting('gateway_url');
-  const token = getSetting('gateway_token');
-  if (!gatewayUrl) return { ok: false, reason: 'no_gateway' };
-
-  const today = todayStr();
-  const daysAhead = Number(getSetting('remind_days', '3'));
-  const template = getSetting('remind_template');
-  const members = db.prepare('SELECT * FROM members WHERE active = 1 AND phone != ""').all();
-  let sentCount = 0;
-  const errors = [];
-
-  for (const m of members) {
-    const sub = subscriptionState(m.id, today);
-    if ((sub.days_left !== null && sub.days_left >= 0 && sub.days_left <= daysAhead) || (sub.state === 'expired' && sub.days_left >= -3)) {
-      // التأكد من عدم تكرار التذكير لنفس العضو اليوم
-      const alreadySent = db
-        .prepare(`SELECT 1 FROM reminders WHERE member_id = ? AND sent_at >= ? LIMIT 1`)
-        .get(m.id, today + 'T00:00:00.000Z');
-      if (alreadySent) continue;
-
-      const msg = formatReminderMessage(template, m, sub, GYM_NAME);
-      try {
-        await sendWhatsAppViaGateway(gatewayUrl, token, m.phone, msg);
-        db.prepare(
-          'INSERT INTO reminders (member_id, sent_at, days_left, phone, status) VALUES (?, ?, ?, ?, ?)'
-        ).run(m.id, new Date().toISOString(), sub.days_left || 0, m.phone, 'automated');
-        sentCount++;
-      } catch (e) {
-        errors.push(`${m.name}: ${e.message}`);
-      }
-    }
+// تغيير كلمة مرور المدير (Admin)
+route('POST', '/api/settings/change-admin-password', 'admin', (ctx) => {
+  const currentPw = typeof ctx.body.currentPassword === 'string' ? ctx.body.currentPassword : '';
+  const newPw = typeof ctx.body.newPassword === 'string' ? ctx.body.newPassword.trim() : '';
+  if (!currentPw) {
+    throw new ApiError(400, 'يرجى إدخال كلمة المرور الحالية للمدير');
   }
-  return { ok: true, sentCount, errors };
-}
-
-// فحص دوري في الخلفية كل ساعتين (أو فور تشغيل السيرفر) لإرسال التذكيرات تلقائياً
-let autoReminderTimer = null;
-function startAutoReminderWorker() {
-  if (autoReminderTimer) clearInterval(autoReminderTimer);
-  // فحص بعد دقيقة من تشغيل السيرفر
-  setTimeout(async () => {
-    try {
-      const res = await runAutomatedReminders();
-      if (res.sentCount > 0) console.log(`[AutoReminders] تم إرسال ${res.sentCount} رسالة تذكير تلقائية عبر الواتساب.`);
-    } catch (e) {
-      console.error('[AutoReminders] Error:', e.message);
-    }
-  }, 60 * 1000);
-
-  // ثم فحص دوري كل ساعتين
-  autoReminderTimer = setInterval(async () => {
-    try {
-      const res = await runAutomatedReminders();
-      if (res.sentCount > 0) console.log(`[AutoReminders] تم إرسال ${res.sentCount} رسالة تذكير تلقائية عبر الواتساب.`);
-    } catch (e) {
-      console.error('[AutoReminders] Error:', e.message);
-    }
-  }, 2 * 60 * 60 * 1000);
-}
-
-// إرسال تلقائي عبر بوابة واتساب إن تم ربطها (يدوياً من زر لوحة التحكم)
-route('POST', '/api/reminders/send-automated', 'admin', async () => {
-  const gatewayUrl = getSetting('gateway_url');
-  if (!gatewayUrl) throw new ApiError(400, 'لم يتم إدخال رابط بوابة الواتساب في الإعدادات');
-  const res = await runAutomatedReminders();
-  return res;
+  if (!safeEqual(currentPw, getAdminPassword())) {
+    throw new ApiError(400, 'كلمة المرور الحالية للمدير غير صحيحة');
+  }
+  if (!newPw || newPw.length < 4) {
+    throw new ApiError(400, 'كلمة المرور الجديدة يجب ألا تقل عن 4 حروف أو أرقام');
+  }
+  if (currentPw === newPw) {
+    throw new ApiError(400, 'كلمة المرور الجديدة مطابقة للكلمة الحالية، يرجى كتابة كلمة مرور مختلفة');
+  }
+  setSetting('admin_password', newPw);
+  return { ok: true, message: 'تم تغيير كلمة مرور المدير (Admin) بنجاح' };
 });
+
 
 // ---------- الملفات الثابتة ----------
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -891,6 +924,8 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
 };
@@ -903,6 +938,7 @@ const CARD_PUBLIC_FILES = new Set([
   'style.css',   // التنسيق
   'login.html',  // صفحة تسجيل الدخول (لازم تكون متاحة)
   'login.js',    // سكريبت تسجيل الدخول
+  'xgym-logo.jpg', // شعار الجيم وخلفية الكارنيه
 ]);
 
 function serveStatic(req, res, pathname, session) {
@@ -1015,9 +1051,11 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`السيستم شغال على http://localhost:${PORT}`);
-    startAutoReminderWorker();
     if (getStaffPassword() === 'staff123') {
       console.log('ملاحظة: كلمة مرور الموظف الافتراضية هي staff123 (يمكن تغييرها من شاشة الإعدادات).');
+    }
+    if (getAdminPassword() === 'admin123') {
+      console.log('ملاحظة: كلمة مرور المدير الافتراضية هي admin123 (يمكن تغييرها من شاشة الإعدادات).');
     }
   });
 }

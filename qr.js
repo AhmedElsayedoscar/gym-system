@@ -320,4 +320,105 @@ function toSvg(text, opts = {}) {
   );
 }
 
-module.exports = { makeQr, toSvg };
+module.exports = { makeQr, toSvg, toBarcode };
+
+// ==================== مولّد باركود Code128 ====================
+// يحول أي نص ASCII إلى باركود Code128 بصيغة SVG — بدون مكتبات خارجية.
+
+// جدول Code128-B (كل حرف ASCII من 32 إلى 126)
+const C128B_VALS = (() => {
+  const v = {};
+  // الأحرف من 32 إلى 126 تأخذ قيم 0..94
+  for (let i = 0; i <= 94; i++) v[String.fromCharCode(i + 32)] = i;
+  return v;
+})();
+
+// أنماط 11-bit لكل قيمة 0..106 في Code128
+const C128_PATTERNS = [
+  '11011001100','11001101100','11001100110','10010011000','10010001100',
+  '10001001100','10011001000','10011000100','10001100100','11001001000',
+  '11001000100','11000100100','10110011100','10011011100','10011001110',
+  '10111001100','10011101100','10011100110','11001110010','11001011100',
+  '11001001110','11011100100','11001110100','11101101110','11101001100',
+  '11100101100','11100100110','11101100100','11100110100','11100110010',
+  '11011011000','11011000110','11000110110','10100011000','10001011000',
+  '10001000110','10110001000','10001101000','10001100010','11010001000',
+  '11000101000','11000100010','10110111000','10110001110','10001101110',
+  '10111011000','10111000110','10001110110','11101110110','11010001110',
+  '11000101110','11011101000','11011100010','11011101110','11101011000',
+  '11101000110','11100010110','11101101000','11101100010','11100011010',
+  '11101111010','11001000010','11110001010','10100110000','10100001100',
+  '10010110000','10010000110','10000101100','10000100110','10110010000',
+  '10110000100','10011010000','10011000010','10000110100','10000110010',
+  '11000010010','11001010000','11110111010','11000010100','10001111010',
+  '10100111100','10010111100','10010011110','10111100100','10011110100',
+  '10011110010','11110100100','11110010100','11110010010','11011011110',
+  '11011110110','11110110110','10101111000','10100011110','10001011110',
+  '10111101000','10111100010','11110101000','11110100010','10111011110',
+  '10111101110','11101011110','11110101110',
+  '11010000100','11010010000','11010011110', // 103=START_B, 104=START_A, 105=START_C  (نستخدم 104=StartB)
+  '11000111010', // 106 = STOP
+];
+
+const START_B = 104;
+const STOP    = 106;
+
+function encodeCode128(text) {
+  const chars = Array.from(text);
+  // احسب قيمة كل حرف في Code128-B
+  const vals = [START_B];
+  let checksum = START_B;
+  for (let i = 0; i < chars.length; i++) {
+    const v = C128B_VALS[chars[i]];
+    if (v === undefined) throw new Error(`الحرف "${chars[i]}" غير مدعوم في Code128-B`);
+    vals.push(v);
+    checksum += v * (i + 1);
+  }
+  vals.push(checksum % 103); // check symbol
+  vals.push(STOP);
+  return vals;
+}
+
+function toBarcode(text, opts = {}) {
+  const barWidth  = opts.barWidth  ?? 2;    // عرض وحدة الشريط بالبكسل
+  const height    = opts.height    ?? 80;   // ارتفاع الشريط
+  const quiet     = opts.quiet     ?? 10;   // هامش صامت جانبي
+  const showText  = opts.showText  !== false;
+  const fontSize  = opts.fontSize  ?? 12;
+  const dark      = opts.dark      || '#000000';
+  const light     = opts.light     || '#ffffff';
+  const textColor = opts.textColor || dark;
+
+  const vals = encodeCode128(String(text));
+  // جمع bits كل القيم
+  let bits = '';
+  for (const v of vals) bits += C128_PATTERNS[v];
+  bits += '1'; // الشريط الإضافي الأخير في STOP
+
+  const barsW = bits.length * barWidth;
+  const totalW = barsW + quiet * 2;
+  const totalH = height + (showText ? fontSize + 4 : 0);
+
+  // بناء مستطيلات الأشرطة الداكنة فقط
+  let rects = '';
+  let x = quiet;
+  for (const bit of bits) {
+    if (bit === '1') {
+      rects += `<rect x="${x}" y="0" width="${barWidth}" height="${height}" fill="${dark}"/>`;
+    }
+    x += barWidth;
+  }
+
+  const textEl = showText
+    ? `<text x="${totalW / 2}" y="${height + fontSize + 1}" text-anchor="middle" font-family="monospace" font-size="${fontSize}" fill="${textColor}">${text}</text>`
+    : '';
+
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" shape-rendering="crispEdges">` +
+    `<rect width="100%" height="100%" fill="${light}"/>` +
+    rects +
+    textEl +
+    `</svg>`
+  );
+}
+

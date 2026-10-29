@@ -2,7 +2,7 @@
 
 let currentMember = null;
 let currentGymName = 'الجيم';
-let qrImageElement = null;
+let barcodeImageElement = null;
 
 // زر الطباعة
 document.getElementById('print').addEventListener('click', () => window.print());
@@ -119,11 +119,11 @@ async function shareOrSaveCard() {
   downloadCard();
 }
 
-function getWhatsAppMessage(m, gym) {
+function getWhatsAppMessage(m,gym) {
   const planInfo = m.sub && m.sub.plan_name ? m.sub.plan_name : 'عضوية عامة';
   const endDate = m.sub && m.sub.end_date ? m.sub.end_date : 'غير محدد';
 
-  return `مرحباً بك يا ${m.name} في ${gym} 🏋️‍♂️✨
+  return `مرحباً بك يا ${m.name} في X Gym🏋️‍♂️✨
 
 تم تسجيل عضويتك بنجاح! تفاصيل الاشتراك:
 🆔 كود العضوية: ${m.code}
@@ -132,8 +132,7 @@ function getWhatsAppMessage(m, gym) {
 
 🪪 مرفق صورة كارت العضوية والـ QR كود الخاص بك للدخول ✨
 (يرجى حفظ صورة الكارت على هاتفك، وإبراز كود الـ QR عند مكتب الاستقبال لتسجيل حضورك في كل تمرين)
-
-نتمنى لك وقتاً ممتعاً وتدريباً موفقاً! 💪🔥`;
+`;
 }
 
 async function sendViaWhatsApp(m) {
@@ -166,147 +165,7 @@ async function sendViaWhatsApp(m) {
 }
 
 async function renderCardToBlob() {
-  const canvas = document.getElementById('cardCanvas');
-  const w = 1016;
-  const h = 638;
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-
-  // التأكد من اكتمال تحميل صورة الـ QR
-  if (qrImageElement && (!qrImageElement.complete || qrImageElement.naturalWidth === 0)) {
-    await new Promise((resolve) => {
-      qrImageElement.onload = resolve;
-      qrImageElement.onerror = resolve;
-      setTimeout(resolve, 1500);
-    });
-  }
-
-  // خلفية الكارت البيضاء مع حواف ناعمة
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.roundRect(0, 0, w, h, 28);
-  ctx.fill();
-
-  // إطار خارجي خفيف
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.roundRect(2, 2, w - 4, h - 4, 26);
-  ctx.stroke();
-
-  // شريط جانبي بلون متدرج أخضر
-  const grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, '#16a34a');
-  grad.addColorStop(1, '#14532d');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.roundRect(0, 0, 95, h, [28, 0, 0, 28]);
-  ctx.fill();
-
-  // النصوص باللغة العربية
-  ctx.direction = 'rtl';
-  ctx.textAlign = 'right';
-
-  // اسم الجيم
-  ctx.fillStyle = '#14532d';
-  ctx.font = 'bold 36px "Segoe UI", Tahoma, Arial, sans-serif';
-  ctx.fillText(currentGymName, w - 120, 75);
-
-  // خط فاصل رفيع
-  ctx.strokeStyle = '#e2e8f0';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(w - 120, 95);
-  ctx.lineTo(w - 560, 95);
-  ctx.stroke();
-
-  // اسم العضو
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 44px "Segoe UI", Tahoma, Arial, sans-serif';
-  let name = currentMember.name;
-  if (name.length > 28) name = name.slice(0, 26) + '...';
-  ctx.fillText(name, w - 120, 160);
-
-  // كود العضو (أرقام فقط)
-  ctx.fillStyle = '#16a34a';
-  ctx.font = 'bold 26px "Segoe UI", Tahoma, Arial, sans-serif';
-  ctx.fillText('كود العضوية:', w - 120, 220);
-
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 46px Consolas, monospace, sans-serif';
-  ctx.fillText(currentMember.code, w - 280, 225);
-
-  // تفاصيل الباقة والانتهاء
-  const plan = (currentMember.sub && currentMember.sub.plan_name) || 'عضوية عامة';
-  const endDate = (currentMember.sub && currentMember.sub.end_date) || '-';
-
-  ctx.fillStyle = '#475569';
-  ctx.font = '26px "Segoe UI", Tahoma, Arial, sans-serif';
-  ctx.fillText(`الباقة: ${plan}`, w - 120, 290);
-  ctx.fillText(`تاريخ الصلاحية: ${endDate}`, w - 120, 340);
-
-  // حالة الاشتراك
-  const state = (currentMember.sub && currentMember.sub.state) || (currentMember.active ? 'active' : 'inactive');
-  let stateText = 'ساري';
-  let stateBg = '#dcfce7';
-  let stateFg = '#15803d';
-  if (state === 'expired' || state === 'inactive') {
-    stateText = state === 'inactive' ? 'موقوف' : 'منتهي';
-    stateBg = '#fee2e2';
-    stateFg = '#b91c1c';
-  } else if (state === 'expiring') {
-    stateText = 'قارب على الانتهاء';
-    stateBg = '#fef3c7';
-    stateFg = '#b45309';
-  }
-
-  // رسم بادج الحالة
-  ctx.fillStyle = stateBg;
-  ctx.beginPath();
-  ctx.roundRect(w - 320, 390, 200, 48, 24);
-  ctx.fill();
-
-  ctx.fillStyle = stateFg;
-  ctx.font = 'bold 24px "Segoe UI", Tahoma, Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(stateText, w - 220, 423);
-
-  // جملة إرشادية أسفل الكارت
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '20px "Segoe UI", Tahoma, Arial, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('يرجى إبراز كود الـ QR عند الدخول لتسجيل الحضور', w - 120, 580);
-
-  // رسم الـ QR كود
-  if (qrImageElement) {
-    if (!qrImageElement.complete) {
-      await new Promise((resolve) => {
-        qrImageElement.onload = resolve;
-        qrImageElement.onerror = resolve;
-      });
-    }
-    const qrSize = 360;
-    const qrX = 120;
-    const qrY = 110;
-
-    // خلفية بيضاء وإطار للـ QR
-    ctx.fillStyle = '#f8fafc';
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(qrX - 10, qrY - 10, qrSize + 20, qrSize + 20, 16);
-    ctx.fill();
-    ctx.stroke();
-
-    try {
-      ctx.drawImage(qrImageElement, qrX, qrY, qrSize, qrSize);
-    } catch {
-      /* ignore drawing error */
-    }
-  }
-
-  return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return renderMemberCardToBlob(currentMember, currentGymName, barcodeImageElement);
 }
 
 (async function init() {
@@ -346,7 +205,7 @@ async function renderCardToBlob() {
         const me = await api('GET', '/api/me');
         const mem = await api('GET', `/api/members/${encodeURIComponent(queryIdent)}`);
         d = {
-          gymName: me.gymName || 'الجيم',
+          gymName: me.gymName || 'X GYM',
           name: mem.member.name,
           code: mem.member.code,
           phone: mem.member.phone,
@@ -360,21 +219,21 @@ async function renderCardToBlob() {
     }
 
     currentMember = d;
-    currentGymName = d.gymName || 'الجيم';
+    currentGymName = d.gymName || 'X GYM';
     document.title = `كارت ${d.name} (${d.code}) - ${currentGymName}`;
 
     const titleEl = document.getElementById('gym-title');
     if (titleEl) {
-      titleEl.textContent = `🏋️‍♂️ ${currentGymName} - كارت العضوية`;
+      titleEl.innerHTML = `<img src="/xgym-logo.jpg" alt="X GYM" class="card-brand-img"> <span>${currentGymName} VIP • كارت العضوية</span>`;
     }
 
-    // تجهيز صورة الـ QR
-    const qrImg = h('img', {
+    // تجهيز صورة الباركود
+    const barcodeImg = h('img', {
       src: d.qrUrl || `/api/public/card-qr/${encodeURIComponent(d.code)}`,
-      alt: 'QR Code',
+      alt: 'باركود',
       loading: 'eager',
     });
-    qrImageElement = qrImg;
+    barcodeImageElement = barcodeImg;
 
     const plan = (d.sub && d.sub.plan_name) || 'عضوية عامة';
     const endDate = (d.sub && d.sub.end_date) || '-';
@@ -388,7 +247,7 @@ async function renderCardToBlob() {
         h(
           'div',
           { class: 'body' },
-          h('div', { class: 'gym' }, currentGymName),
+          h('div', { class: 'gym' }, `⚡ ${currentGymName} VIP`),
           h('div', { class: 'nm' }, d.name),
           h('div', { class: 'cd mono' }, `كود: ${d.code}`),
           h(
@@ -399,7 +258,9 @@ async function renderCardToBlob() {
             h('span', null, badge(state))
           )
         ),
-        h('div', { class: 'qr' }, qrImg)
+        h('div', { class: 'qr' },
+          h('div', { class: 'qr-inner' }, barcodeImg)
+        )
       )
     );
   } catch (e) {

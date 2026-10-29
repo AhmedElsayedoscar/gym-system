@@ -20,14 +20,21 @@ On Error Goto 0
 
 ' إذا لم يكن السيرفر يعمل، نقوم بتشغيله في الخلفية بدون أي شاشة سوداء
 If Not isRunning Then
-    WshShell.Run "node server.js", 0, False
-    WScript.Sleep 1000
+    WshShell.Run "node --disable-warning=ExperimentalWarning server.js", 0, False
+    WScript.Sleep 1500
 End If
 
 ' فتح التطبيق في نافذة مستقلة كأنه برنامج ديسك توب (App Mode)
-edgePath = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-If fso.FileExists(edgePath) Then
-    WshShell.Run """" & edgePath & """ --app=http://localhost:3000 --window-size=1300,850", 1, False
-Else
+appOpened = False
+edgePaths = Array("C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "C:\Program Files\Microsoft\Edge\Application\msedge.exe", "C:\Program Files\Google\Chrome\Application\chrome.exe")
+For Each p In edgePaths
+    If fso.FileExists(p) Then
+        WshShell.Run """" & p & """ --app=http://localhost:3000 --window-size=1300,850", 1, False
+        appOpened = True
+        Exit For
+    End If
+Next
+
+If Not appOpened Then
     WshShell.Run "http://localhost:3000", 1, False
 End If

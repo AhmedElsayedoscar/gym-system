@@ -44,7 +44,7 @@ function showResult(cls, big, sub) {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     resultEl.className = 'result';
-    resultEl.replaceChildren(h('div', { class: 'big' }, 'جاهز للمسح'), h('div', { class: 'sub' }, 'وجّه كود الـ QR ناحية الكاميرا'));
+    resultEl.replaceChildren(h('div', { class: 'big' }, 'جاهز للمسح'), h('div', { class: 'sub' }, 'مرّر البار كود أو اكتب الكود أدناه'));
   }, 7000);
 }
 
@@ -119,14 +119,19 @@ async function startCamera() {
     return;
   }
   if (!('BarcodeDetector' in window)) {
-    camMsg.textContent = 'المتصفح ده مابيدعمش قراءة QR بالكاميرا. استخدم Chrome على أندرويد/ويندوز، أو قارئ باركود USB، أو اكتب الكود تحت.';
+    camMsg.textContent = 'المتصفح ده مابيدعمش قراءة الباركود بالكاميرا. استخدم Chrome على أندرويد/ويندوز، أو قارئ باركود USB، أو اكتب الكود تحت.';
     return;
   }
   let detector;
   try {
-    detector = new BarcodeDetector({ formats: ['qr_code'] });
+    // نجرب Code128 أولا، وإذا ماشتغلش نرجع للصيغتين الممكنتين
+    try {
+      detector = new BarcodeDetector({ formats: ['code_128', 'code_39'] });
+    } catch {
+      detector = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39'] });
+    }
   } catch {
-    camMsg.textContent = 'قراءة QR مش متاحة على الجهاز ده. استخدم قارئ باركود أو اكتب الكود تحت.';
+    camMsg.textContent = 'قراءة الباركود مش متاحة على الجهاز ده. استخدم قارئ باركود USB أو اكتب الكود تحت.';
     return;
   }
   try {

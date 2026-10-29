@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sub_member ON subscriptions(member_id, status, end_date);
+CREATE INDEX IF NOT EXISTS idx_sub_created ON subscriptions(created_at);
 
 CREATE TABLE IF NOT EXISTS attendance (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,8 +83,6 @@ const defaultTemplate = `مرحباً بك يا {name} في {gym} 🏋️‍♂�
 const setIns = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
 setIns.run('remind_days', '3');
 setIns.run('remind_template', defaultTemplate);
-setIns.run('gateway_url', '');
-setIns.run('gateway_token', '');
 
 // باقات افتراضية (الأسعار أمثلة فقط، يعدلها صاحب الجيم من شاشة الباقات)
 if (db.prepare('SELECT COUNT(*) AS c FROM plans').get().c === 0) {

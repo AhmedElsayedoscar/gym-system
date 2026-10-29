@@ -8,6 +8,7 @@ const NAV = [
   ['#/', 'لوحة التحكم'],
   ['#/members', 'الأعضاء'],
   ['#/attendance', 'الحضور'],
+  ['#/daily-report', '📊 التقرير اليومي', 'admin'],
   ['#/plans', 'الباقات', 'admin'],
   ['#/reminders', '🔔 الإشعارات', 'admin'],
   ['#/settings', '⚙️ الإعدادات', 'admin'],
@@ -81,8 +82,8 @@ async function pageDashboard() {
     h(
       'div',
       { class: 'alert warn', style: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px' },
-      h('span', null, '⚠️ تنبيه: السيستم يعمل بكلمة مرور الموظف الافتراضية. يُنصح بتغييرها للأمان.'),
-      h('a', { href: '#/settings', class: 'btn small primary', style: 'text-decoration:none' }, 'تغيير كلمة مرور الموظف')
+      h('span', null, '⚠️ تنبيه: السيستم يعمل بكلمة مرور افتراضية (المدير أو الموظف). يُنصح بتغييرها للأمان.'),
+      h('a', { href: '#/settings', class: 'btn small primary', style: 'text-decoration:none' }, 'تغيير كلمات المرور')
     );
 
   const expiringRows = s.expiringList.length
@@ -120,7 +121,8 @@ async function pageDashboard() {
       tile('warn', s.expiring, 'ينتهي خلال 7 أيام', '#/members?status=expiring'),
       tile('bad', s.expired, 'اشتراكات منتهية', '#/members?status=expired'),
       tile('info', s.todayCount, 'حضور النهارده', '#/attendance'),
-      tile('', s.deniedToday, 'محاولات مرفوضة النهارده', '#/attendance')
+      tile('', s.deniedToday, 'محاولات مرفوضة النهارده', '#/attendance'),
+      ME.role === 'admin' ? tile('gold', '📊 تقرير الوردية', 'التقرير اليومي للاشتراكات', '#/daily-report') : ''
     ),
     h(
       'div',
@@ -326,7 +328,7 @@ async function pageMember(id) {
       h(
         'div',
         { class: 'member-head' },
-        h('div', { class: 'qr-box' }, h('div', { class: 'code mono' }, m.code), h('img', { src: `/api/members/${m.id}/qr.svg`, alt: 'QR' })),
+        h('div', { class: 'qr-box' }, h('div', { class: 'code mono' }, m.code), h('img', { src: `/api/members/${m.id}/qr.svg`, alt: 'باركود' })),
         h(
           'div',
           { class: 'member-info' },
@@ -400,20 +402,19 @@ function editMemberModal(m, done) {
 function openWhatsAppModal(m) {
   const planInfo = m.sub && m.sub.plan_name ? m.sub.plan_name : 'عضوية عامة';
   const endDate = m.sub && m.sub.end_date ? m.sub.end_date : 'غير محدد';
-  const gym = ME.gymName || 'الجيم';
+  const gym = ME.gymName || 'X GYM';
 
   // رسالة الواتساب بدون رابط لوكال هوست إطلاقاً، ومجهزة لإرسال صورة الكارت
-  const defaultMsg = `مرحباً بك يا ${m.name} في ${gym} 🏋️‍♂️✨
+  const defaultMsg = `مرحباً بك يا ${m.name} في X GYM 
 
 تم تسجيل عضويتك بنجاح! تفاصيل الاشتراك:
-🆔 كود العضوية: ${m.code}
-📋 نوع الباقة: ${planInfo}
-📅 تاريخ انتهاء الاشتراك: ${endDate}
+ كود العضوية: ${m.code}
+ نوع الباقة: ${planInfo}
+ تاريخ انتهاء الاشتراك: ${endDate}
 
-🪪 مرفق صورة كارت العضوية والـ QR كود الخاص بك للدخول ✨
-(يرجى حفظ صورة الكارت على هاتفك، وإبراز كود الـ QR عند مكتب الاستقبال لتسجيل حضورك في كل تمرين)
-
-نتمنى لك وقتاً ممتعاً وتدريباً موفقاً! 💪🔥`;
+🪪 مرفق صورة كارت العضوية والبار كود الخاص بك للدخول 
+(يرجى حفظ صورة الكارت على هاتفك، وإبراز البار كود عند مكتب الاستقبال لتسجيل حضورك في كل تمرين)
+`;
 
   const phoneInput = h('input', { type: 'tel', value: m.phone || '', placeholder: 'مثال: 01012345678', class: 'ltr' });
   const msgBox = h('textarea', { rows: 7, style: 'font-size:0.85rem;resize:vertical' }, defaultMsg);
@@ -840,6 +841,385 @@ async function pageAttendance() {
   await load();
 }
 
+// ---------- التقرير اليومي وتقفيل الوردية (للمدير) ----------
+async function pageDailyReport(query) {
+  if (ME.role !== 'admin') {
+    app.replaceChildren(h('div', { class: 'alert bad' }, 'الصفحة دي للمدير فقط'));
+    return;
+  }
+
+  const params = new URLSearchParams(query);
+  const today = todayLocal();
+  let selectedDate = params.get('date') || today;
+  let q = '';
+  let typeFilter = 'all'; // all, new, renew
+  let reportData = null;
+
+  // عناصر الرأس وشريط التنقل بين الأيام
+  const dateDisplay = h('span', { class: 'muted', style: 'font-weight:700;font-size:1.05rem' });
+  const dateInput = h('input', {
+    type: 'date',
+    value: selectedDate,
+    style: 'max-width:160px;font-weight:700',
+    onchange: (e) => {
+      if (e.target.value) setDay(e.target.value);
+    },
+  });
+
+  const presetContainer = h('div', { class: 'preset-bar no-print' });
+  const summaryBox = h('div', { class: 'tiles' });
+  const tableWrap = h('div', { class: 'card table-wrap' });
+  const historyCard = h('div', { class: 'card no-print', style: 'margin-top:22px' });
+
+  // حقول التصفية والبحث في جدول اليوم
+  const searchInput = h('input', {
+    type: 'search',
+    placeholder: 'ابحث في حركات اليوم بالاسم، كود العضو، الموبايل، أو الباقة...',
+    style: 'min-width:250px;flex:2',
+    oninput: (e) => {
+      q = e.target.value.trim().toLowerCase();
+      renderTable();
+    },
+  });
+
+  const typeSelect = h(
+    'select',
+    {
+      style: 'max-width:200px;flex:1',
+      onchange: (e) => {
+        typeFilter = e.target.value;
+        renderTable();
+      },
+    },
+    h('option', { value: 'all' }, 'الكل (اشتراكات وتجديدات)'),
+    h('option', { value: 'new' }, '🟢 اشتراكات جديدة فقط'),
+    h('option', { value: 'renew' }, '🔄 تجديدات فقط')
+  );
+
+  function setDay(day) {
+    selectedDate = day;
+    dateInput.value = day;
+    try {
+      history.replaceState(null, '', `#/daily-report?date=${day}`);
+    } catch {
+      /* ignore */
+    }
+    load(day).catch((e) => toast(e.message, true));
+  }
+
+  function renderPresets() {
+    const isToday = selectedDate === today;
+    const yesterday = shiftDays(today, -1);
+    const isYesterday = selectedDate === yesterday;
+
+    presetContainer.replaceChildren(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: `preset-btn ${isToday ? 'active' : ''}`,
+          onclick: () => setDay(today),
+        },
+        '📅 اليوم'
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: `preset-btn ${isYesterday ? 'active' : ''}`,
+          onclick: () => setDay(yesterday),
+        },
+        '⏪ أمس'
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'preset-btn',
+          title: 'اليوم السابق',
+          onclick: () => setDay(shiftDays(selectedDate, -1)),
+        },
+        '◀ اليوم السابق'
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'preset-btn',
+          title: 'اليوم التالي',
+          onclick: () => setDay(shiftDays(selectedDate, 1)),
+        },
+        'اليوم التالي ▶'
+      )
+    );
+  }
+
+  function renderSummary() {
+    if (!reportData) return;
+    const tile = (cls, num, lbl) =>
+      h('div', { class: `tile ${cls}` }, h('div', { class: 'num' }, num), h('div', { class: 'lbl' }, lbl));
+
+    summaryBox.replaceChildren(
+      tile('gold', `${fmtMoney(reportData.totalRevenue)} ج.م`, '💰 إجمالي إيراد اليوم (خزينة الوردية)'),
+      tile('info', reportData.totalCount, '🧾 إجمالي حركات الاشتراك'),
+      tile('ok', `${reportData.newCount} (${fmtMoney(reportData.newRevenue)} ج.م)`, '🟢 اشتراكات جديدة'),
+      tile('', `${reportData.renewCount} (${fmtMoney(reportData.renewRevenue)} ج.م)`, '🔄 تجديد اشتراك'),
+      tile('info', `${reportData.attendanceCount} زيارة`, '🏋️‍♂️ حضور الأعضاء اليوم')
+    );
+  }
+
+  function renderTable() {
+    if (!reportData) return;
+    const rows = (reportData.list || []).filter((r) => {
+      if (typeFilter === 'new' && r.type !== 'new') return false;
+      if (typeFilter === 'renew' && r.type !== 'renew') return false;
+      if (q) {
+        const text = `${r.member_name} ${r.member_code} ${r.member_phone} ${r.plan_name}`.toLowerCase();
+        if (!text.includes(q)) return false;
+      }
+      return true;
+    });
+
+    const totalFilteredCash = rows.reduce((acc, r) => (r.status !== 'cancelled' ? acc + (Number(r.price) || 0) : acc), 0);
+
+    const tbody = h('tbody');
+    if (!rows.length) {
+      tbody.append(
+        h(
+          'tr',
+          null,
+          h(
+            'td',
+            { class: 'empty', colspan: 10 },
+            reportData.list.length === 0
+              ? 'مفيش أي اشتراكات أو تجديدات مسجلة في هذا اليوم.'
+              : 'لا توجد نتائج مطابقة للبحث أو التصفية.'
+          )
+        )
+      );
+    } else {
+      rows.forEach((r, idx) => {
+        const isCancelled = r.status === 'cancelled';
+        const typeBadge =
+          r.type === 'new'
+            ? h('span', { class: 'badge sub-new' }, '🟢 جديد')
+            : h('span', { class: 'badge sub-renew' }, '🔄 تجديد');
+
+        const statusBadge = isCancelled
+          ? h('span', { class: 'badge sub-cancelled' }, 'ملغي')
+          : h('span', { class: 'badge active' }, 'ساري');
+
+        const tr = h(
+          'tr',
+          {
+            style: isCancelled ? 'opacity:0.6;' : '',
+          },
+          h('td', { class: 'muted' }, String(idx + 1)),
+          h('td', null, r.time || '-'),
+          h('td', { class: 'mono', style: 'font-weight:bold;color:#ffd778' }, r.member_code),
+          h(
+            'td',
+            null,
+            h(
+              'a',
+              {
+                href: `#/members/${r.member_id}`,
+                style: 'font-weight:700;color:#fff;',
+                title: 'فتح ملف العضو',
+              },
+              r.member_name
+            )
+          ),
+          h(
+            'td',
+            { class: 'ltr' },
+            r.member_phone
+              ? h(
+                  'a',
+                  {
+                    href: `https://wa.me/${formatWhatsAppPhone(r.member_phone)}`,
+                    target: '_blank',
+                    rel: 'noopener',
+                    style: 'color:#cbd5e1;font-size:0.9rem',
+                    title: 'مراسلة عبر واتساب',
+                  },
+                  r.member_phone
+                )
+              : '-'
+          ),
+          h('td', null, typeBadge),
+          h('td', { style: 'font-weight:600' }, r.plan_name),
+          h('td', { class: 'muted', style: 'font-size:0.85rem' }, `${ltr(r.start_date)} إلى ${ltr(r.end_date)}`),
+          h(
+            'td',
+            { style: 'font-weight:800;color:#ffd778;font-size:1.05rem' },
+            `${fmtMoney(r.price)} ج.م`
+          ),
+          h('td', null, statusBadge)
+        );
+        tbody.append(tr);
+      });
+    }
+
+    const tfoot = h(
+      'tfoot',
+      null,
+      h(
+        'tr',
+        { style: 'background:#181c28;border-top:2px solid var(--brand);font-weight:800;font-size:1rem;' },
+        h('td', { colspan: 5, style: 'color:#fff;' }, `عدد العمليات المعروضة: ${rows.length}`),
+        h('td', { colspan: 3, style: 'text-align:end;color:#cbd5e1;' }, 'إجمالي المبلغ المعروض:'),
+        h('td', { colspan: 2, style: 'color:#ffd778;font-size:1.15rem;' }, `${fmtMoney(totalFilteredCash)} ج.م`)
+      )
+    );
+
+    tableWrap.replaceChildren(
+      h(
+        'table',
+        null,
+        h(
+          'thead',
+          null,
+          h(
+            'tr',
+            null,
+            h('th', { style: 'width:40px' }, '#'),
+            h('th', null, 'الوقت'),
+            h('th', null, 'كود العضو'),
+            h('th', null, 'اسم المشترك'),
+            h('th', null, 'رقم الموبايل'),
+            h('th', null, 'نوع الحركة'),
+            h('th', null, 'الباقة'),
+            h('th', null, 'المدة'),
+            h('th', null, 'المبلغ المدفوع'),
+            h('th', null, 'الحالة')
+          )
+        ),
+        tbody,
+        tfoot
+      )
+    );
+  }
+
+  function renderHistory() {
+    if (!reportData || !reportData.recentHistory) return;
+    const items = reportData.recentHistory.map((item) => {
+      const isSel = item.date === selectedDate;
+      const isTd = item.date === today;
+      const dObj = new Date(item.date + 'T00:00:00Z');
+      const dayName = dObj.toLocaleDateString('ar-EG', { weekday: 'short', timeZone: 'UTC' });
+      const dateDisplayStr = item.date.slice(5); // MM-DD
+
+      return h(
+        'div',
+        {
+          class: `history-item ${isSel ? 'active' : ''}`,
+          onclick: () => setDay(item.date),
+          title: `عرض تقرير ${item.date}`,
+        },
+        h('div', { class: 'd-title' }, isTd ? 'اليوم' : `${dayName} (${dateDisplayStr})`),
+        h('div', { class: 'd-rev' }, `${fmtMoney(item.revenue)} ج.م`),
+        h('div', { class: 'd-cnt' }, `${item.count} اشتراك`)
+      );
+    });
+
+    historyCard.replaceChildren(
+      h(
+        'div',
+        { style: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px' },
+        h('h2', { style: 'margin:0;' }, '🗓️ سجل تقفيل الوردية للأيام السابقة (آخر أسبوعين)'),
+        h('span', { class: 'muted', style: 'font-size:0.85rem' }, 'اضغط على أي يوم لعرض اشتراكاته وإيراده بالكامل')
+      ),
+      h('div', { class: 'history-grid' }, ...items)
+    );
+  }
+
+  async function load(day) {
+    reportData = await api('GET', `/api/reports/daily?date=${encodeURIComponent(day)}`);
+    const dateFormatted = fmtDayArabic(day);
+    dateDisplay.textContent = dateFormatted;
+    renderPresets();
+    renderSummary();
+    renderTable();
+    renderHistory();
+  }
+
+  // ورقة مطبوعة لتقفيل الوردية (تظهر فقط عند الطباعة)
+  const printHeader = h(
+    'div',
+    { class: 'print-only', style: 'margin-bottom:20px;text-align:center;border-bottom:2px solid #000;padding-bottom:12px' },
+    h('h1', { style: 'margin:0 0 6px 0;font-size:1.8rem;color:#000' }, `${ME.gymName || 'X GYM'} — تقرير إيراد الوردية اليومي`),
+    h('div', { style: 'font-size:1.1rem;font-weight:bold;color:#333' }, `تاريخ اليوم: ${selectedDate} (${fmtDayArabic(selectedDate)})`),
+    h('div', { style: 'font-size:0.9rem;color:#666;margin-top:4px' }, `وقت استخراج التقرير: ${new Date().toLocaleString('ar-EG', { timeZone: TZ })}`)
+  );
+
+  const printSignatures = h(
+    'div',
+    { class: 'print-only-flex', style: 'justify-content:space-between;margin-top:40px;padding-top:20px;border-top:1px dashed #444;font-size:1rem;color:#000' },
+    h('div', null, h('b', null, 'مسؤول الوردية (الاستقبال):'), ' ................................'),
+    h('div', null, h('b', null, 'المشرف / الإدارة:'), ' ................................'),
+    h('div', null, h('b', null, 'الخزينة المستلمة:'), ' ................................ ج.م')
+  );
+
+  app.replaceChildren(
+    printHeader,
+    h(
+      'div',
+      { class: 'page-head no-print' },
+      h(
+        'div',
+        null,
+        h('h1', { style: 'display:flex;align-items:center;gap:10px' }, '📊 التقرير اليومي للوردية'),
+        h('div', { class: 'muted', style: 'font-size:0.95rem;margin-top:2px' }, 'متابعة كافة الاشتراكات والتجديدات اليومية ومطابقة إيراد الخزينة')
+      ),
+      h(
+        'div',
+        { class: 'actions' },
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn primary',
+            onclick: () => window.print(),
+          },
+          '🖨️ طباعة تقرير الوردية'
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn',
+            onclick: () => setDay(selectedDate),
+          },
+          '🔄 تحديث'
+        )
+      )
+    ),
+    h(
+      'div',
+      { class: 'card no-print', style: 'padding:14px 18px;margin-bottom:16px;' },
+      h(
+        'div',
+        { style: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px' },
+        h('div', { class: 'date-nav' }, h('span', { style: 'font-weight:700' }, 'تاريخ الوردية:'), dateInput, dateDisplay),
+        presetContainer
+      )
+    ),
+    summaryBox,
+    h(
+      'div',
+      { class: 'toolbar no-print', style: 'margin-top:20px;margin-bottom:12px' },
+      searchInput,
+      typeSelect
+    ),
+    tableWrap,
+    printSignatures,
+    historyCard
+  );
+
+  await load(selectedDate);
+}
+
 // ---------- الباقات (للمدير) ----------
 async function pagePlans() {
   if (ME.role !== 'admin') {
@@ -911,11 +1291,8 @@ async function pageReminders() {
 
   let editingTemplate = data.template || '';
   let editingDays = settings.remind_days || '3';
-  let editingGatewayUrl = settings.gateway_url || '';
-  let editingToken = settings.gateway_token || '';
 
   const tableBox = h('div', { class: 'table-wrap' });
-  const sendAllBtn = h('button', { class: 'btn whatsapp', style: 'min-width:200px' }, '📤 إرسال تلقائي للكل عبر البوابة');
 
   function buildReminderTable(list, template, gymName) {
     if (!list.length) {
@@ -963,7 +1340,7 @@ async function pageReminders() {
               if (cardUrl) {
                 resMsg = resMsg.replace(/{card_url}/g, cardUrl);
               } else {
-                resMsg = resMsg.replace(/\n?📲 كارت العضوية والـ QR الخاص بك:\n?{card_url}/g, '').replace(/{card_url}/g, '');
+                resMsg = resMsg.replace(/\n?📲 كارت العضوية والبار كود الخاص بك:\n?{card_url}/g, '').replace(/{card_url}/g, '');
               }
               return resMsg;
             }
@@ -1006,7 +1383,7 @@ async function pageReminders() {
                 onclick: () => {
                   const msg = makeWhatsAppMsg();
                   openModal(`معاينة رسالة ${m.name}`,
-                    [h('pre', { style: 'white-space:pre-wrap;font-size:0.85rem;direction:rtl;text-align:right;background:#f8fafc;padding:12px;border-radius:8px;border:1px solid #e2e8f0;max-height:320px;overflow-y:auto' }, msg)],
+                    [h('pre', { style: 'white-space:pre-wrap;font-size:0.85rem;direction:rtl;text-align:right;background:#141724;color:#f1f5f9;padding:14px;border-radius:10px;border:1px solid rgba(229,169,60,0.25);max-height:320px;overflow-y:auto' }, msg)],
                     async () => {}, 'إغلاق'
                   );
                 }
@@ -1015,11 +1392,11 @@ async function pageReminders() {
 
             return h('tr', null,
               h('td', { class: 'mono' }, m.code),
-              h('td', { class: 'clickable', onclick: () => (location.hash = `#/members/${m.id}`) }, h('b', { style: 'color:var(--brand-dark)' }, m.name)),
+              h('td', { class: 'clickable', onclick: () => (location.hash = `#/members/${m.id}`) }, h('b', { style: 'color:var(--brand-light)' }, m.name)),
               h('td', { class: 'ltr' }, phone || '-'),
               h('td', null, m.plan_name),
               h('td', null, m.end_date ? ltr(m.end_date) : '-'),
-              h('td', null, h('b', { style: m.days_left <= 0 ? 'color:#b91c1c' : m.days_left <= 2 ? 'color:#b45309' : 'color:#15803d' }, daysStr)),
+              h('td', null, h('b', { style: m.days_left <= 0 ? 'color:#f87171' : m.days_left <= 2 ? 'color:#fbbf24' : 'color:#4ade80' }, daysStr)),
               h('td', { class: 'muted', style: 'font-size:0.8rem' }, m.lastReminder ? fmtDateTime(m.lastReminder.sent_at) : '-'),
               h('td', null, waBtn, previewBtn)
             );
@@ -1031,76 +1408,37 @@ async function pageReminders() {
 
   buildReminderTable(data.list, data.template, data.gymName);
 
-  sendAllBtn.addEventListener('click', async () => {
-    if (!data.hasGateway) {
-      toast('يجب إدخال رابط بوابة الواتساب في الإعدادات أدناه أولاً', true);
-      return;
-    }
-    if (!confirm('إرسال رسائل واتساب تلقائية لجميع الأعضاء الذين لم يتم تذكيرهم اليوم؟')) return;
-    sendAllBtn.disabled = true;
-    sendAllBtn.textContent = '⏳ جاري الإرسال...';
-    try {
-      const r = await api('POST', '/api/reminders/send-automated', {});
-      toast(`تم الإرسال بنجاح لـ ${r.sentCount} عضو`);
-      if (r.errors && r.errors.length) {
-        console.warn('Reminder errors:', r.errors);
-        toast(`فشل الإرسال لـ ${r.errors.length} أعضاء (تحقق من الـ console)`, true);
-      }
-      route();
-    } catch (e) {
-      toast(e.message, true);
-      sendAllBtn.disabled = false;
-      sendAllBtn.textContent = '📤 إرسال تلقائي للكل عبر البوابة';
-    }
-  });
-
-  const templateBox = h('textarea', { rows: 9, style: 'font-size:0.85rem;resize:vertical;direction:rtl;text-align:right;width:100%' }, editingTemplate);
-  const daysInput = h('input', { type: 'number', min: 1, max: 30, value: editingDays, style: 'max-width:80px' });
-  const gatewayInput = h('input', { type: 'url', value: editingGatewayUrl, placeholder: 'https://api.ultramsg.com/instance/messages/chat', style: 'direction:ltr' });
-  const tokenInput = h('input', { type: 'text', value: editingToken, placeholder: 'رمز API Token', style: 'direction:ltr' });
+  const templateBox = h('textarea', { rows: 9, style: 'font-size:0.88rem;resize:vertical;direction:rtl;text-align:right;width:100%' }, editingTemplate);
+  const daysInput = h('input', { type: 'number', min: 1, max: 30, value: editingDays, style: 'max-width:90px' });
 
   const saveSettingsBtn = h('button', { class: 'btn primary', onclick: async () => {
     try {
       await api('POST', '/api/settings', {
         remind_days: daysInput.value,
         remind_template: templateBox.value,
-        gateway_url: gatewayInput.value.trim(),
-        gateway_token: tokenInput.value.trim(),
       });
-      toast('تم حفظ الإعدادات بنجاح');
+      toast('تم حفظ إعدادات الرسائل بنجاح');
       route();
     } catch (e) { toast(e.message, true); }
-  }}, 'حفظ الإعدادات');
+  }}, '💾 حفظ إعدادات التذكير');
 
   app.replaceChildren(
     h('div', { class: 'page-head' },
-      h('h1', null, '🔔 إشعارات تجديد الاشتراكات'),
-      sendAllBtn
+      h('h1', null, '🔔 إشعارات تجديد الاشتراكات')
     ),
-    h('div', { class: 'alert warn', style: 'margin-bottom:12px' },
+    h('div', { class: 'alert warn', style: 'margin-bottom:14px' },
       `📋 قائمة الأعضاء الذين اشتراكاتهم ستنتهي خلال ${data.daysAhead} يوم أو انتهت مؤخراً (${data.list.length} عضو)`
     ),
-    h('div', { class: 'card table-wrap', style: 'margin-bottom:16px' }, tableBox),
+    h('div', { class: 'card table-wrap', style: 'margin-bottom:18px' }, tableBox),
 
     h('div', { class: 'card' },
-      h('h2', null, '⚙️ إعدادات الإشعارات'),
-      h('div', { class: 'row', style: 'margin-bottom:12px;align-items:center;gap:12px' },
+      h('h2', null, '⚙️ إعدادات قالب رسالة التذكير'),
+      h('div', { class: 'row', style: 'margin-bottom:14px;align-items:center;gap:12px' },
         h('label', { style: 'font-weight:600' }, 'التذكير قبل الانتهاء بـ:'),
         daysInput,
         h('span', { class: 'muted' }, 'يوم')
       ),
       field('نص الرسالة (يمكنك استخدام {name} {gym} {plan} {end_date} {days_left} {card_url})', templateBox),
-      h('div', { class: 'card', style: 'margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0' },
-        h('h3', null, '🤖 الإرسال التلقائي (بوابة API)'),
-        h('div', { class: 'muted', style: 'font-size:0.85rem;margin-bottom:12px' },
-          'اختياري: يمكن ربط النظام ببوابة واتساب API (مثل UltraMsg أو CallMeBot أو أي بوابة POST) للإرسال التلقائي دون الحاجة لضغط أي زر. اتركه فارغاً لاستخدام الإرسال اليدوي فقط.'
-        ),
-        field('رابط بوابة الواتساب (API Endpoint) - اختياري', gatewayInput),
-        field('رمز API Token - اختياري', tokenInput),
-        h('div', { class: 'muted', style: 'font-size:0.82rem;margin-top:6px' },
-          '💡 مثال: UltraMsg: https://api.ultramsg.com/instance12345/messages/chat | Token: رمزك'
-        )
-      ),
       h('div', { class: 'actions', style: 'margin-top:16px' }, saveSettingsBtn)
     )
   );
@@ -1114,6 +1452,109 @@ async function pageSettings() {
   }
 
   const settings = await api('GET', '/api/settings');
+
+  // كارت تغيير باسوورد المدير (Admin)
+  const adminCurrentPw = h('input', {
+    type: 'password',
+    placeholder: 'كلمة المرور الحالية للمدير',
+    autocomplete: 'current-password',
+    style: 'direction:ltr',
+  });
+  const adminNewPw = h('input', {
+    type: 'password',
+    placeholder: 'كلمة المرور الجديدة للمدير (4 خانات فأكثر)',
+    autocomplete: 'new-password',
+    style: 'direction:ltr',
+  });
+  const adminConfirmPw = h('input', {
+    type: 'password',
+    placeholder: 'تأكيد كلمة المرور الجديدة',
+    autocomplete: 'new-password',
+    style: 'direction:ltr',
+  });
+
+  const showAdminPwCheck = h('input', {
+    type: 'checkbox',
+    id: 'show-admin-pw',
+    style: 'width:auto;margin:0',
+  });
+  showAdminPwCheck.addEventListener('change', () => {
+    const t = showAdminPwCheck.checked ? 'text' : 'password';
+    adminCurrentPw.type = t;
+    adminNewPw.type = t;
+    adminConfirmPw.type = t;
+  });
+
+  const adminErr = h('div', { class: 'alert bad', hidden: true, style: 'margin-top:10px' });
+  const adminSuccess = h('div', { class: 'alert ok', hidden: true, style: 'margin-top:10px' });
+  const changeAdminBtn = h('button', { class: 'btn primary' }, '💾 حفظ كلمة مرور المدير');
+
+  changeAdminBtn.addEventListener('click', async () => {
+    adminErr.hidden = true;
+    adminSuccess.hidden = true;
+    const current = adminCurrentPw.value;
+    const next = adminNewPw.value.trim();
+    const confirm = adminConfirmPw.value.trim();
+
+    if (!current) {
+      adminErr.textContent = 'يرجى إدخال كلمة المرور الحالية للمدير';
+      adminErr.hidden = false;
+      adminCurrentPw.focus();
+      return;
+    }
+    if (!next || next.length < 4) {
+      adminErr.textContent = 'كلمة المرور الجديدة يجب ألا تقل عن 4 خانات';
+      adminErr.hidden = false;
+      adminNewPw.focus();
+      return;
+    }
+    if (next !== confirm) {
+      adminErr.textContent = 'كلمة المرور الجديدة وتأكيدها غير متطابقين';
+      adminErr.hidden = false;
+      adminConfirmPw.focus();
+      return;
+    }
+    changeAdminBtn.disabled = true;
+    try {
+      const res = await api('POST', '/api/settings/change-admin-password', {
+        currentPassword: current,
+        newPassword: next,
+      });
+      adminSuccess.textContent = res.message || 'تم تحديث كلمة مرور المدير بنجاح';
+      adminSuccess.hidden = false;
+      adminCurrentPw.value = '';
+      adminNewPw.value = '';
+      adminConfirmPw.value = '';
+      toast('تم تحديث كلمة مرور المدير بنجاح');
+      ME = await api('GET', '/api/me');
+    } catch (e) {
+      adminErr.textContent = e.message;
+      adminErr.hidden = false;
+    } finally {
+      changeAdminBtn.disabled = false;
+    }
+  });
+
+  const adminCard = h('div', { class: 'card', style: 'margin-bottom:20px' },
+    h('h2', null, '🛡️ تغيير كلمة مرور المدير (Admin)'),
+    h('p', { class: 'muted', style: 'font-size:0.9rem;margin-bottom:14px' },
+      'تمنحك هذه الكلمة صلاحيات الإدارة الكاملة (حذف وتعديل الأعضاء والاشتراكات، إدارة الأسعار والباقات، والوصول لكافة الإعدادات).'
+    ),
+    h('div', { class: 'row', style: 'align-items:flex-end;gap:12px;margin-bottom:8px' },
+      field('كلمة المرور الحالية', adminCurrentPw),
+      field('كلمة المرور الجديدة', adminNewPw),
+      field('تأكيد الكلمة الجديدة', adminConfirmPw)
+    ),
+    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:8px' },
+      h('label', { for: 'show-admin-pw', style: 'cursor:pointer;font-weight:normal;font-size:0.85rem;display:inline-flex;align-items:center;gap:6px;user-select:none;margin:0' },
+        showAdminPwCheck,
+        'إظهار كلمات المرور'
+      ),
+      changeAdminBtn
+    ),
+    adminErr,
+    adminSuccess
+  );
 
   // كارت تغيير باسوورد الموظف
   const staffPwInput = h('input', {
@@ -1165,19 +1606,31 @@ async function pageSettings() {
   );
 
   // كارت معلومات النظام والحالة
-  const infoCard = h('div', { class: 'card', style: 'background:#f8fafc;border:1px solid #e2e8f0' },
-    h('h3', null, 'ℹ️ معلومات كلمة مرور الموظفين'),
-    h('ul', { style: 'margin:0;padding-inline-start:20px;font-size:0.9rem;line-height:1.8' },
-      h('li', null, 'كلمة المرور الافتراضية للموظف هي: ', h('code', null, 'staff123')),
-      h('li', null, 'عند تغيير كلمة المرور هنا، تُحفظ تلقائياً في قاعدة البيانات ولا تتأثر بإعادة تشغيل الجهاز.'),
-      h('li', null, 'يمكن لموظف الاستقبال تسجيل الدخول بالكلمة الجديدة فوراً.')
+  const infoCard = h('div', {
+    class: 'card',
+    style: 'background:linear-gradient(135deg, rgba(20,24,35,0.95) 0%, rgba(14,16,24,0.95) 100%);border:1.5px solid rgba(229,169,60,0.35);box-shadow:0 8px 24px rgba(0,0,0,0.4);border-radius:14px;padding:22px;margin-bottom:20px;'
+  },
+    h('h3', { style: 'color:#ffd778;display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:1.15rem;font-weight:800;' },
+      '🛡️ معلومات الأمان وكلمات المرور'
+    ),
+    h('ul', { style: 'margin:0;padding-inline-start:24px;font-size:0.95rem;line-height:2.2;color:#cbd5e1;' },
+      h('li', null,
+        'كلمة المرور الافتراضية للمدير هي: ',
+        h('code', { style: 'background:rgba(229,169,60,0.15);color:#ffd778;border:1px solid rgba(229,169,60,0.35);padding:2px 8px;border-radius:6px;font-weight:bold;font-family:Consolas,monospace;' }, 'admin123'),
+        ' وكلمة مرور الموظف هي: ',
+        h('code', { style: 'background:rgba(229,169,60,0.15);color:#ffd778;border:1px solid rgba(229,169,60,0.35);padding:2px 8px;border-radius:6px;font-weight:bold;font-family:Consolas,monospace;' }, 'staff123')
+      ),
+      h('li', null, 'عند تعديل أي كلمة مرور، تُحفظ تلقائياً في قاعدة البيانات بشكل دائم ولا تتأثر بإعادة تشغيل الجهاز أو السيرفر.'),
+      h('li', null, 'تأكد من حفظ كلمة مرور المدير الجديدة في مكان آمن لضمان عدم فقدان صلاحيات الإدارة.'),
+      h('li', null, 'حساب الموظف (Staff) يتيح تسجيل الحضور وإضافة الأعضاء والاشتراكات، دون صلاحية حذف البيانات أو تعديل الأسعار أو تغيير كلمات المرور.')
     )
   );
 
   app.replaceChildren(
     h('div', { class: 'page-head' },
-      h('h1', null, '⚙️ إعدادات كلمة مرور الموظف (Staff)')
+      h('h1', null, '⚙️ إعدادات كلمات المرور والأمان')
     ),
+    adminCard,
     staffCard,
     infoCard
   );
@@ -1194,6 +1647,7 @@ async function route() {
     else if (pathPart === '#/members') await pageMembers(query);
     else if ((m = pathPart.match(/^#\/members\/(\d+)$/))) await pageMember(m[1]);
     else if (pathPart === '#/attendance') await pageAttendance();
+    else if (pathPart === '#/daily-report') await pageDailyReport(query);
     else if (pathPart === '#/plans') await pagePlans();
     else if (pathPart === '#/reminders') await pageReminders();
     else if (pathPart === '#/settings') await pageSettings();
@@ -1210,8 +1664,14 @@ async function route() {
     return; // api() بيحوّل لصفحة الدخول
   }
   if (ME.gymName) {
-    document.title = `إدارة ${ME.gymName}`;
-    document.getElementById('brand').replaceChildren(document.createTextNode(ME.gymName));
+    document.title = `${ME.gymName} — نظام الإدارة`;
+    const brandEl = document.getElementById('brand');
+    if (brandEl) {
+      brandEl.replaceChildren(
+        h('img', { src: '/xgym-logo.jpg', alt: ME.gymName, class: 'brand-logo' }),
+        h('span', null, ME.gymName)
+      );
+    }
   }
   document.getElementById('logout').addEventListener('click', logout);
   window.addEventListener('hashchange', route);
