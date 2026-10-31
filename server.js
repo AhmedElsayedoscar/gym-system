@@ -526,11 +526,23 @@ route('DELETE', '/api/subscriptions/:id', 'admin', (ctx) => {
   return { ok: true };
 });
 
+function memberBarcodeSvg(code) {
+  const s = String(code || '').trim();
+  // باركود عريض وضخم للسكانر بخطوط واضحة وهامش أبيض آمن وسهل القراءة
+  const barWidth = s.length <= 4 ? 7 : s.length <= 6 ? 6 : s.length <= 8 ? 5 : 4;
+  return toBarcode(s, {
+    barWidth,
+    height: 180,
+    quiet: 40,
+    fontSize: 22,
+  });
+}
+
 route('GET', '/api/members/:id/qr.svg', 'staff', (ctx) => {
   const id = intParam(ctx.params.id);
   const m = db.prepare('SELECT code FROM members WHERE id = ?').get(id);
   if (!m) throw new ApiError(404, 'العضو غير موجود');
-  return { raw: toBarcode(m.code, { barWidth: 3, height: 100, fontSize: 14 }), type: 'image/svg+xml; charset=utf-8' };
+  return { raw: memberBarcodeSvg(m.code), type: 'image/svg+xml; charset=utf-8' };
 });
 
 // المسارات العامة لعرض كارت العضوية والـ QR (متاحة للعضو عبر رابط الواتساب بدون تسجيل دخول)
@@ -568,7 +580,8 @@ route('GET', '/api/public/card/:ident', null, (ctx) => {
 route('GET', '/api/public/card-qr/:ident', null, (ctx) => {
   const m = findMemberByIdent(ctx.params.ident);
   if (!m) throw new ApiError(404, 'العضو غير موجود');
-  return { raw: toBarcode(m.code, { barWidth: 3, height: 100, fontSize: 14 }), type: 'image/svg+xml; charset=utf-8' };
+  return { raw: memberBarcodeSvg(m.code), type: 'image/svg+xml; charset=utf-8' };
+
 });
 
 // الحضور

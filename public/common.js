@@ -244,88 +244,59 @@ async function renderMemberCardToBlob(m, gymName, barcodeImgElem) {
   ctx.lineTo(w - 560, 116);
   ctx.stroke();
 
-  // اسم العضو
+  // اسم العضو بخط عريض وواضح
   ctx.fillStyle = '#ffffff';
-  ctx.font = '900 44px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
+  ctx.font = '900 48px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
   let name = m.name || '';
   if (name.length > 26) name = name.slice(0, 24) + '...';
-  ctx.fillText(name, w - 120, 178);
+  ctx.fillText(name, w - 120, 180);
 
-  // كود العضو (أرقام فقط)
+  // كود العضوية بأرقام بارزة
   ctx.fillStyle = '#e5a93c';
-  ctx.font = 'bold 24px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
-  ctx.fillText('كود العضوية:', w - 120, 235);
+  ctx.font = 'bold 26px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
+  ctx.fillText('كود العضوية:', w - 120, 245);
 
   ctx.fillStyle = '#ffd778';
-  ctx.font = '900 46px Consolas, monospace, sans-serif';
-  ctx.fillText(String(m.code || ''), w - 260, 240);
+  ctx.font = '900 52px Consolas, monospace, sans-serif';
+  ctx.fillText(String(m.code || ''), w - 280, 252);
 
-  // تفاصيل الباقة والانتهاء
-  const plan = (m.sub && m.sub.plan_name) || 'عضوية عامة';
-  const endDate = (m.sub && m.sub.end_date) || '-';
-
-  ctx.fillStyle = '#e2e8f0';
-  ctx.font = 'bold 25px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
-  ctx.fillText(`الباقة: ${plan}`, w - 120, 305);
-  ctx.fillText(`تاريخ الصلاحية: ${endDate}`, w - 120, 355);
-
-  // حالة الاشتراك
-  const state = (m.sub && m.sub.state) || (m.active ? 'active' : 'inactive');
-  let stateText = 'ساري (نشط)';
-  let stateBg = 'rgba(20, 83, 45, 0.85)';
-  let stateBorder = '#22c55e';
-  let stateFg = '#4ade80';
-
-  if (state === 'expired' || state === 'inactive') {
-    stateText = state === 'inactive' ? 'عضوية موقوفة' : 'اشتراك منتهي';
-    stateBg = 'rgba(127, 29, 29, 0.85)';
-    stateBorder = '#ef4444';
-    stateFg = '#fca5a5';
-  } else if (state === 'expiring') {
-    stateText = 'قارب على الانتهاء';
-    stateBg = 'rgba(120, 53, 15, 0.85)';
-    stateBorder = '#f59e0b';
-    stateFg = '#fde047';
-  }
-
-  // رسم بادج الحالة
-  ctx.fillStyle = stateBg;
-  ctx.strokeStyle = stateBorder;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.roundRect(w - 340, 395, 220, 50, 25);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = stateFg;
-  ctx.font = 'bold 23px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
+  // جملة إرشادية للسكانر
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = 'bold 16px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(stateText, w - 230, 428);
+  ctx.fillText('⚡ وجّه الباركود أمام السكانر لتسجيل الحضور فوراً', w / 2, 292);
 
-  // جملة إرشادية صغيرة
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '16px "Segoe UI", Cairo, Tahoma, Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('مرّر البار كود عند مكتب الاستقبال لتسجيل الحضور', w / 2, 565);
+  // رسم الباركود الرئيسي بحجم ضخم وعريض جداً لأعلى سرعة استجابة في المسح
+  const naturalRatio = (barcodeImg.naturalWidth && barcodeImg.naturalHeight)
+    ? (barcodeImg.naturalWidth / barcodeImg.naturalHeight)
+    : 3.0;
 
-  // رسم الباركود في الأسفل — صندوق أبيض بحجم معقول بإطار ذهبي
-  const barW = Math.round(w * 0.52);   // ~52% من عرض الكارت
-  const barH = 120;                    // ارتفاع يظهر الخطوط + الكود تحتها
-  const barX = Math.round((w - barW) / 2);  // توسيط
-  const barY = h - barH - 28;
+  const barH = 260; // ارتفاع ضخم للأعمدة يضمن التقاط السكانر فوراً بأي زاوية
+  let barW = Math.round(barH * naturalRatio);
+  const maxBarW = Math.round(w * 0.82); // حد أقصى 82% من عرض الكارت (~830px)
+  if (barW > maxBarW) barW = maxBarW;
+  const minBarW = Math.round(w * 0.60); // حد أدنى 60% (~610px)
+  if (barW < minBarW) barW = minBarW;
 
-  // خلفية بيضاء للباركود
+  const padX = 20;
+  const padY = 15;
+  const boxW = barW + padX * 2;
+  const boxH = barH + padY * 2;
+  const boxX = Math.round((w - boxW) / 2);
+  const boxY = 315;
+
+  // خلفية بيضاء ناصعة مع إطار ذهبي فخم يمنحان السكانر أعلى تباين ممكن
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
-  ctx.roundRect(barX - 10, barY - 10, barW + 20, barH + 20, 12);
+  ctx.roundRect(boxX, boxY, boxW, boxH, 18);
   ctx.fill();
 
   ctx.strokeStyle = '#e5a93c';
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
   ctx.stroke();
 
   try {
-    ctx.drawImage(barcodeImg, barX, barY, barW, barH);
+    ctx.drawImage(barcodeImg, boxX + padX, boxY + padY, barW, barH);
   } catch (err) {
     console.warn('Barcode draw error:', err);
   }

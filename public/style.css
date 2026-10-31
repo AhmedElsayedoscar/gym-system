@@ -305,7 +305,7 @@ input:focus, select:focus, textarea:focus {
   border: 1.5px solid rgba(229, 169, 60, 0.4);
   border-radius: 14px;
   padding: 10px;
-  width: 260px;
+  width: 300px;
   text-align: center;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
 }
@@ -315,7 +315,7 @@ input:focus, select:focus, textarea:focus {
   background: #fff;
   border-radius: 8px;
   padding: 6px 4px;
-  min-height: 60px;
+  min-height: 80px;
   object-fit: contain;
 }
 .qr-box .code { font-size: 0.85rem; font-weight: 800; padding-bottom: 6px; color: var(--brand-light); }
@@ -528,8 +528,9 @@ body.cardpage {
 .card-loading { padding: 30px; text-align: center; color: var(--muted); font-size: 1.1rem; }
 
 .member-card {
-  width: 90mm;
-  height: 64mm;
+  width: min(94vw, 410px);
+  min-height: 275px;
+  height: auto;
   max-width: 95vw;
   margin: 16px auto;
   background: #0d0e12 url('/xgym-logo.jpg') no-repeat center center;
@@ -564,11 +565,11 @@ body.cardpage {
 .member-card .body {
   position: relative;
   z-index: 2;
-  flex: 1;
-  padding: 4.5mm 5mm;
+  flex: 0 0 auto;
+  padding: 4mm 5mm 2.5mm;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 3px;
   min-width: 0;
 }
 .member-card .gym {
@@ -583,38 +584,31 @@ body.cardpage {
 }
 .member-card .nm {
   font-weight: 800;
-  font-size: 13.5pt;
+  font-size: 15pt;
   color: #ffffff;
   line-height: 1.25;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
   overflow-wrap: anywhere;
 }
 .member-card .cd {
-  font-size: 12pt;
+  font-size: 13pt;
   font-weight: 800;
   color: #ffd778;
   letter-spacing: 1px;
   font-family: Consolas, monospace;
   text-shadow: 0 0 8px rgba(229, 169, 60, 0.4);
 }
-.member-card .details {
-  font-size: 8.5pt;
-  color: #cbd5e1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
 .member-card .qr {
   position: relative;
   z-index: 2;
   width: 100%;
   max-width: 100%;
-  padding: 2mm 4mm 3mm;
+  padding: 3mm 4mm 5mm;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex: 1;
   box-sizing: border-box;
   overflow: hidden;
   background: rgba(0,0,0,0.25);
@@ -622,11 +616,14 @@ body.cardpage {
 }
 .member-card .qr-inner {
   background: #ffffff;
-  padding: 3px 5px;
-  border-radius: 2mm;
-  border: 1.5px solid #e5a93c;
-  box-shadow: 0 0 10px rgba(229, 169, 60, 0.35);
-  width: 70%;
+  padding: 8px 16px;
+  border-radius: 3.5mm;
+  border: 2px solid #e5a93c;
+  box-shadow: 0 0 14px rgba(229, 169, 60, 0.4);
+  width: 95%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
@@ -635,8 +632,8 @@ body.cardpage {
   width: 100%;
   max-width: 100%;
   display: block;
-  height: 56px;
-  object-fit: fill;
+  height: 110px;
+  object-fit: contain;
 }
 .card-mobile-hint {
   text-align: center;
@@ -651,7 +648,8 @@ body.cardpage {
 @media print {
   body.cardpage { background: #fff; color: #000; }
   .card-header-bar, .print-bar, .card-mobile-hint, .app-footer { display: none !important; }
-  .member-card { box-shadow: none; margin: 0 auto; break-inside: avoid; }
+  .member-card { box-shadow: none; margin: 0 auto; break-inside: avoid; width: 92mm; min-height: 66mm; height: auto; }
+  .member-card .qr-inner img { height: 95px; }
   @page { margin: 10mm; }
 
   /* تنسيق طباعة التقرير اليومي وتقفيل الوردية */
@@ -910,3 +908,14 @@ body.cardpage {
   padding: 24px 10px 24px;
 }
 
+
+@media (max-width: 500px) {
+  .member-card {
+    width: 96vw;
+    min-height: 290px;
+    margin: 10px auto;
+  }
+  .member-card .qr-inner img {
+    height: 125px;
+  }
+}

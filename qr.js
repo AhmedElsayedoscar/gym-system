@@ -397,7 +397,8 @@ function toBarcode(text, opts = {}) {
 
   const barsW = bits.length * barWidth;
   const totalW = barsW + quiet * 2;
-  const totalH = height + (showText ? fontSize + 4 : 0);
+  const fontPad = showText ? fontSize + 8 : 0;
+  const totalH = height + fontPad;
 
   // بناء مستطيلات الأشرطة الداكنة فقط
   let rects = '';
@@ -410,11 +411,11 @@ function toBarcode(text, opts = {}) {
   }
 
   const textEl = showText
-    ? `<text x="${totalW / 2}" y="${height + fontSize + 1}" text-anchor="middle" font-family="monospace" font-size="${fontSize}" fill="${textColor}">${text}</text>`
+    ? `<text x="${totalW / 2}" y="${height + fontSize + 3}" text-anchor="middle" font-family="Consolas, monospace, sans-serif" font-weight="bold" font-size="${fontSize}" letter-spacing="2px" fill="${textColor}">${text}</text>`
     : '';
 
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" shape-rendering="crispEdges">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" preserveAspectRatio="${opts.preserveAspectRatio || 'xMidYMid meet'}" shape-rendering="crispEdges">` +
     `<rect width="100%" height="100%" fill="${light}"/>` +
     rects +
     textEl +

@@ -235,10 +235,6 @@ async function renderCardToBlob() {
     });
     barcodeImageElement = barcodeImg;
 
-    const plan = (d.sub && d.sub.plan_name) || 'عضوية عامة';
-    const endDate = (d.sub && d.sub.end_date) || '-';
-    const state = (d.sub && d.sub.state) || (d.active ? 'active' : 'inactive');
-
     box.replaceChildren(
       h(
         'div',
@@ -249,14 +245,7 @@ async function renderCardToBlob() {
           { class: 'body' },
           h('div', { class: 'gym' }, `⚡ ${currentGymName} VIP`),
           h('div', { class: 'nm' }, d.name),
-          h('div', { class: 'cd mono' }, `كود: ${d.code}`),
-          h(
-            'div',
-            { class: 'details' },
-            h('span', null, `الباقة: ${plan}`),
-            h('span', null, `الانتهاء: ${endDate}`),
-            h('span', null, badge(state))
-          )
+          h('div', { class: 'cd mono' }, `كود العضوية: ${d.code}`)
         ),
         h('div', { class: 'qr' },
           h('div', { class: 'qr-inner' }, barcodeImg)
