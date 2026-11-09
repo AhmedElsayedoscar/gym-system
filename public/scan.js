@@ -65,8 +65,12 @@ async function refreshCount() {
   }
 }
 
+function toEnglishDigits(str) {
+  return String(str || '').replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+}
+
 async function handleCode(raw) {
-  const code = String(raw || '').trim();
+  const code = toEnglishDigits(String(raw || '').trim());
   if (!code || busy) return;
   const now = Date.now();
   if (code === lastCode && now - lastAt < 4000) return; // تجاهل التكرار السريع من الكاميرا
@@ -110,6 +114,12 @@ document.getElementById('manual').addEventListener('submit', (e) => {
 });
 document.addEventListener('click', (e) => {
   if (!e.target.closest('a, button')) codeInput.focus();
+});
+// تركيز تلقائي فوري للسكانر اليدوي USB عند ضغط أي زر
+window.addEventListener('keydown', (e) => {
+  if (document.activeElement !== codeInput && !e.target.closest('input, textarea, select, button, a')) {
+    codeInput.focus();
+  }
 });
 
 // ---------- الكاميرا ----------
@@ -160,7 +170,7 @@ async function startCamera() {
         /* تجاهل أخطاء الإطار الواحد */
       }
     }
-    setTimeout(loop, 250);
+    setTimeout(loop, 120);
   };
   loop();
 }

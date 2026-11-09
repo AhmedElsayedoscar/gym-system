@@ -206,7 +206,19 @@ async function pageMembers(query) {
   });
 
   app.replaceChildren(
-    h('div', { class: 'page-head' }, h('h1', null, 'الأعضاء'), h('button', { class: 'btn primary', onclick: () => addMemberModal() }, '+ عضو جديد')),
+    h(
+      'div',
+      { class: 'page-head' },
+      h('h1', null, 'الأعضاء'),
+      h(
+        'div',
+        { style: 'display:flex;gap:8px;flex-wrap:wrap;' },
+        ME.role === 'admin'
+          ? h('a', { class: 'btn', href: '/api/export/members.csv', target: '_blank', title: 'تصدير شيت إكسيل لجميع الأعضاء والاشتراكات' }, '📥 تصدير Excel')
+          : null,
+        h('button', { class: 'btn primary', onclick: () => addMemberModal() }, '+ عضو جديد')
+      )
+    ),
     h('div', { class: 'toolbar' }, search, statusSel),
     list
   );
@@ -297,6 +309,9 @@ async function pageMember(id) {
     'div',
     { class: 'actions', style: 'margin-top:12px' },
     h('button', { class: 'btn primary', onclick: () => renewModal(m, refresh) }, 'تجديد / اشتراك جديد'),
+    m.active && (m.sub.state === 'active' || m.sub.state === 'expiring')
+      ? h('button', { class: 'btn', style: 'border-color:rgba(59,130,246,0.6);color:#93c5fd;font-weight:bold;', onclick: () => freezeModal(m, refresh) }, '❄️ تجميد الاشتراك')
+      : null,
     h('button', { class: 'btn', onclick: () => editMemberModal(m, refresh) }, 'تعديل البيانات'),
     h('a', { class: 'btn', href: `/card.html?code=${encodeURIComponent(m.code)}`, target: '_blank', rel: 'noopener' }, 'طباعة الكارت'),
     h('button', { class: 'btn whatsapp', onclick: () => openWhatsAppModal(m) }, '💬 إرسال الكارت عبر واتساب'),
@@ -349,6 +364,29 @@ async function pageMember(id) {
       h('div', { class: 'table-wrap' }, h('table', null, h('thead', null, h('tr', null, ['الباقة', 'من', 'إلى', 'السعر', 'الحالة', ''].map((t) => h('th', null, t)))), h('tbody', null, subRows)))
     ),
     h('div', { class: 'card' }, h('h2', null, 'آخر حضور'), h('div', { class: 'table-wrap' }, h('table', null, h('tbody', null, attRows))))
+  );
+}
+
+async function freezeModal(m, done) {
+  openModal(
+    `❄️ تجميد اشتراك — ${m.name}`,
+    [
+      h('div', { class: 'muted', style: 'font-size:0.92rem;margin-bottom:14px;line-height:1.7;' },
+        'تاريخ انتهاء الاشتراك الحالي: ',
+        h('b', { style: 'color:#ffd778;' }, ltr(m.sub.end_date)),
+        '. سيتم تمديد تاريخ الانتهاء تلقائياً بمقدار عدد أيام التجميد، وتسجيلها في سجل المشترك.'
+      ),
+      field('عدد أيام التجميد (بالأيام)', h('input', { name: 'days', type: 'number', min: 1, max: 365, value: 7, required: true })),
+      field('سبب التجميد (اختياري)', h('input', { name: 'reason', type: 'text', placeholder: 'مثال: ظروف صحية، سفر، امتحانات...' })),
+    ],
+    async (fd) => {
+      const days = parseInt(fd.get('days'), 10);
+      const reason = fd.get('reason');
+      const res = await api('POST', `/api/members/${m.id}/freeze`, { days, reason });
+      toast(res.message || 'تم تجميد وتمديد الاشتراك بنجاح');
+      done();
+    },
+    'تأكيد التجميد ❄️'
   );
 }
 
@@ -1605,26 +1643,71 @@ async function pageSettings() {
     staffSuccess
   );
 
-  // كارت معلومات النظام والحالة
-  const infoCard = h('div', {
-    class: 'card',
-    style: 'background:linear-gradient(135deg, rgba(20,24,35,0.95) 0%, rgba(14,16,24,0.95) 100%);border:1.5px solid rgba(229,169,60,0.35);box-shadow:0 8px 24px rgba(0,0,0,0.4);border-radius:14px;padding:22px;margin-bottom:20px;'
-  },
-    h('h3', { style: 'color:#ffd778;display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:1.15rem;font-weight:800;' },
-      '🛡️ معلومات الأمان وكلمات المرور'
-    ),
-    h('ul', { style: 'margin:0;padding-inline-start:24px;font-size:0.95rem;line-height:2.2;color:#cbd5e1;' },
-      h('li', null,
-        'كلمة المرور الافتراضية للمدير هي: ',
-        h('code', { style: 'background:rgba(229,169,60,0.15);color:#ffd778;border:1px solid rgba(229,169,60,0.35);padding:2px 8px;border-radius:6px;font-weight:bold;font-family:Consolas,monospace;' }, 'admin123'),
-        ' وكلمة مرور الموظف هي: ',
-        h('code', { style: 'background:rgba(229,169,60,0.15);color:#ffd778;border:1px solid rgba(229,169,60,0.35);padding:2px 8px;border-radius:6px;font-weight:bold;font-family:Consolas,monospace;' }, 'staff123')
-      ),
-      h('li', null, 'عند تعديل أي كلمة مرور، تُحفظ تلقائياً في قاعدة البيانات بشكل دائم ولا تتأثر بإعادة تشغيل الجهاز أو السيرفر.'),
-      h('li', null, 'تأكد من حفظ كلمة مرور المدير الجديدة في مكان آمن لضمان عدم فقدان صلاحيات الإدارة.'),
-      h('li', null, 'حساب الموظف (Staff) يتيح تسجيل الحضور وإضافة الأعضاء والاشتراكات، دون صلاحية حذف البيانات أو تعديل الأسعار أو تغيير كلمات المرور.')
-    )
-  );
+  // دالة فتح سجل العمليات الإدارية (عند الطلب فقط)
+  function openAuditModal() {
+    const container = h('div', { style: 'max-height:380px;overflow-y:auto;min-height:100px;' },
+      h('div', { class: 'muted', style: 'padding:20px;text-align:center;' }, 'جاري تحميل السجل...')
+    );
+
+    openModal(
+      '📋 سجل العمليات الإدارية',
+      [
+        h('p', { class: 'muted', style: 'font-size:0.88rem;margin-bottom:12px;line-height:1.6;' },
+          'يسجل السيستم كافة الحركات الحساسة (تجميد أو إلغاء الاشتراكات، حذف الأعضاء، تعديل كلمات المرور، والنسخ الاحتياطي) لضمان الشفافية ومتابعة العمليات بدقة.'
+        ),
+        container
+      ],
+      () => {},
+      'إغلاق'
+    );
+
+    api('GET', '/api/audit-logs').then(logs => {
+      const actionLabels = {
+        login_success: 'تسجيل دخول ناجح',
+        login_failed: 'محاولة دخول فاشلة',
+        subscription_created: 'إضافة اشتراك',
+        subscription_cancelled: 'إلغاء اشتراك',
+        subscription_frozen: 'تجميد اشتراك',
+        member_deleted: 'حذف عضو',
+        manual_attendance: 'تسجيل حضور يدوي',
+        change_admin_password: 'تغيير كلمة مرور المدير',
+        change_staff_password: 'تغيير كلمة مرور الموظف',
+        backup_created: 'نسخة احتياطية',
+        backup_restored: 'استرجاع قاعدة بيانات',
+        database_optimized: 'صيانة قاعدة البيانات',
+        export_members_csv: 'تصدير إكسيل',
+      };
+
+      const tableRows = logs && logs.length
+        ? logs.slice(0, 40).map(l =>
+            h('tr', null,
+              h('td', null, h('span', { class: 'badge', style: l.action.includes('delete') || l.action.includes('cancelled') ? 'background:rgba(239,68,68,0.15);color:#f87171;' : l.action.includes('frozen') ? 'background:rgba(59,130,246,0.15);color:#93c5fd;' : 'background:rgba(229,169,60,0.15);color:#ffd778;' }, actionLabels[l.action] || l.action)),
+              h('td', null, h('b', { style: l.performed_by === 'admin' ? 'color:#ffd778;' : 'color:#93c5fd;' }, l.performed_by)),
+              h('td', { style: 'max-width:320px;white-space:normal;font-size:0.86rem;color:#cbd5e1;' }, l.details),
+              h('td', { class: 'muted', style: 'font-size:0.82rem;' }, fmtDateTime(l.created_at))
+            )
+          )
+        : [h('tr', null, h('td', { class: 'empty', colspan: 4 }, 'لا توجد حركات مسجلة بعد.'))];
+
+      container.replaceChildren(
+        h('div', { class: 'table-wrap' },
+          h('table', null,
+            h('thead', null,
+              h('tr', null,
+                h('th', null, 'العملية'),
+                h('th', null, 'المنفذ'),
+                h('th', null, 'التفاصيل'),
+                h('th', null, 'الوقت')
+              )
+            ),
+            h('tbody', null, tableRows)
+          )
+        )
+      );
+    }).catch(e => {
+      container.replaceChildren(h('div', { class: 'alert bad' }, 'تعذر تحميل السجل: ' + e.message));
+    });
+  }
 
   // كارت النسخ الاحتياطي وحماية البيانات
   const backupCard = h('div', { class: 'card', style: 'margin-bottom:20px;' });
@@ -1635,6 +1718,22 @@ async function pageSettings() {
       const downloadBtn = h('a', { class: 'btn', href: '/api/backup/download', target: '_blank', download: '' }, '💾 تحميل نسخة لجهازك / فلاشة');
       const restoreInput = h('input', { type: 'file', accept: '.db,.sqlite', style: 'display:none' });
       const restoreBtn = h('button', { class: 'btn danger' }, '🔄 استرجاع نسخة احتياطية');
+      const optBtn = h('button', { class: 'btn' }, '🚀 تسريع وتنظيف النظام');
+      const auditBtn = h('button', { class: 'btn' }, '📋 سجل العمليات');
+
+      optBtn.onclick = async () => {
+        optBtn.disabled = true;
+        try {
+          await api('POST', '/api/database/optimize', {});
+          toast('تم تسريع وتنظيف ملفات النظام وقاعدة البيانات بنجاح 🚀');
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          optBtn.disabled = false;
+        }
+      };
+
+      auditBtn.onclick = () => openAuditModal();
 
       backupBtn.onclick = async () => {
         backupBtn.disabled = true;
@@ -1654,7 +1753,7 @@ async function pageSettings() {
       restoreInput.onchange = async () => {
         const file = restoreInput.files[0];
         if (!file) return;
-        if (!confirm(`⚠️ تحذير هـام جداً:\n\nاسترجاع ملف النسخة الاحتياطية (${file.name}) سيستبدل جميع بيانات الجيم الحالية بالبيانات الموجودة في الملف.\n\nهل أنت متأكد من المتابعة والاسترجاع؟`)) {
+        if (!confirm("⚠️ تحذير هـام جداً:\n\nاسترجاع ملف النسخة الاحتياطية (" + file.name + ") سيستبدل جميع بيانات الجيم الحالية بالبيانات الموجودة في الملف.\n\nهل أنت متأكد من المتابعة والاسترجاع؟")) {
           restoreInput.value = '';
           return;
         }
@@ -1691,7 +1790,7 @@ async function pageSettings() {
                 status.recentBackups.map(b =>
                   h('tr', null,
                     h('td', { class: 'mono', style: 'color:#ffd778;font-size:0.88rem' }, b.name),
-                    h('td', null, `${Math.round(b.size / 1024)} كيلوبايت`),
+                    h('td', null, Math.round(b.size / 1024) + ' كيلوبايت'),
                     h('td', { class: 'muted', style: 'font-size:0.85rem' }, fmtDateTime(b.mtime))
                   )
                 )
@@ -1705,10 +1804,12 @@ async function pageSettings() {
         h('p', { class: 'muted', style: 'font-size:0.92rem;margin-bottom:14px;line-height:1.7' },
           'يقوم السيستم بعمل نسخ احتياطي تلقائي يومياً. لحماية بياناتك من سقوط نسخة الويندوز أو تلف الجهاز، يمكنك تحميل نسخة احتياطية يدوياً بضغطة زر أو حفظها في بارتشن آخر / فلاشة خارجية.'
         ),
-        h('div', { class: 'row', style: 'gap:10px;align-items:center;margin-bottom:14px;' },
+        h('div', { class: 'row', style: 'gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;' },
           backupBtn,
           downloadBtn,
           restoreBtn,
+          optBtn,
+          auditBtn,
           restoreInput
         ),
         h('div', { style: 'background:rgba(20,24,35,0.7);border:1px solid rgba(229,169,60,0.2);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:0.9rem;' },
@@ -1718,16 +1819,13 @@ async function pageSettings() {
             : ''
         ),
         h('h3', { style: 'font-size:0.95rem;margin:14px 0 6px;' }, '🕒 آخر النسخ الاحتياطية المحفوظة تلقائياً:'),
-        backupsTable,
-        h('div', { style: 'background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:10px;padding:12px 16px;margin-top:14px;font-size:0.88rem;color:#bfdbfe;line-height:1.7;' },
-          '💡 ', h('b', null, 'نصيحة ذهبية للحفظ السحابي المجاني:'),
-          ' يمكنك تثبيت برنامج Google Drive أو OneDrive على الكمبيوتر، وتحديد مجلد النسخ الاحتياطية ليتزامن معه. بذلك سيتم رفع كل نسخة احتياطية تلقائياً وبأمان على حسابك في جوجل دون أي مجهود منك!'
-        )
+        backupsTable
       );
     } catch (e) {
       backupCard.replaceChildren(h('div', { class: 'alert bad' }, 'تعذر تحميل حالة النسخ الاحتياطي: ' + e.message));
     }
   }
+
   renderBackupSection();
 
   app.replaceChildren(
@@ -1736,8 +1834,7 @@ async function pageSettings() {
     ),
     backupCard,
     adminCard,
-    staffCard,
-    infoCard
+    staffCard
   );
 }
 

@@ -26,6 +26,61 @@ function getStaffPassword() {
 }
 
 // مفتاح توقيع الجلسات (يتولد مرة واحدة ويتخزن)
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt:${salt}:${derivedKey}`;
+}
+
+function verifyPasswordAndUpgrade(password, storedValue, settingKey) {
+  if (!storedValue) return false;
+  if (storedValue.startsWith('scrypt:')) {
+    const parts = storedValue.split(':');
+    if (parts.length !== 3) return false;
+    const salt = parts[1];
+    const hash = parts[2];
+    const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex');
+    const a = Buffer.from(hash, 'hex');
+    const b = Buffer.from(derivedKey, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+  // في حال كانت كلمة المرور القديمة نصاً عادياً (Plaintext) يتم التحقق وتشفيرها فورياً في القاعدة
+  if (safeEqual(password, storedValue)) {
+    try {
+      setSetting(settingKey, hashPassword(password));
+    } catch {
+      /* ignore */
+    }
+    return true;
+  }
+  return false;
+}
+
+function isDefaultPassword(storedValue, defaultPw) {
+  if (!storedValue || storedValue === defaultPw) return true;
+  if (storedValue.startsWith('scrypt:')) {
+    const parts = storedValue.split(':');
+    if (parts.length !== 3) return false;
+    const salt = parts[1];
+    const hash = parts[2];
+    const derivedKey = crypto.scryptSync(defaultPw, salt, 64).toString('hex');
+    const a = Buffer.from(hash, 'hex');
+    const b = Buffer.from(derivedKey, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+  return false;
+}
+
+// سجل العمليات والتدقيق الإداري (Audit Logging)
+function logAudit(action, performedBy, details = '', ip = '') {
+  try {
+    db.prepare('INSERT INTO audit_logs (action, performed_by, details, ip, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(action, performedBy, typeof details === 'object' ? JSON.stringify(details) : String(details), ip, new Date().toISOString());
+  } catch (e) {
+    console.warn('[Audit Log Error]:', e.message);
+  }
+}
+
 const SECRET_FILE = path.join(DATA_DIR, 'session.key');
 let SECRET;
 if (process.env.SESSION_SECRET) SECRET = process.env.SESSION_SECRET;
@@ -120,18 +175,49 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-// حماية بسيطة ضد تخمين كلمة المرور
-const failures = new Map(); // ip -> {count, until}
-function checkLoginAllowed(ip) {
-  const f = failures.get(ip);
-  if (f && f.until > Date.now() && f.count >= 5) {
-    throw new ApiError(429, 'محاولات كتير غلط. استنى شوية وجرب تاني');
+// نظام حماية وتحديد معدل الطلبات (Rate Limiting)
+const rateLimits = new Map(); // key -> { count, resetAt }
+function checkRateLimit(key, maxRequests, windowMs, errorMsg = 'محاولات كثيرة جداً، يرجى الانتظار قليلاً') {
+  const now = Date.now();
+  let r = rateLimits.get(key);
+  if (!r || r.resetAt <= now) {
+    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return;
+  }
+  r.count++;
+  if (r.count > maxRequests) {
+    throw new ApiError(429, errorMsg);
   }
 }
+
+// تنظيف دوري للذاكرة المؤقتة لمعدل الطلبات كل 10 دقائق
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateLimits.entries()) {
+    if (v.resetAt <= now) rateLimits.delete(k);
+  }
+}, 10 * 60 * 1000).unref();
+
+function checkLoginAllowed(ip) {
+  checkRateLimit(`login:${ip}`, 5, 10 * 60 * 1000, 'محاولات دخول خاطئة متكررة. يرجى الانتظار 10 دقائق والمحاولة مجدداً');
+}
+
 function recordFailure(ip) {
-  const f = failures.get(ip);
-  if (!f || f.until < Date.now()) failures.set(ip, { count: 1, until: Date.now() + 10 * 60000 });
-  else f.count++;
+  const r = rateLimits.get(`login:${ip}`);
+  if (!r || r.resetAt <= Date.now()) {
+    rateLimits.set(`login:${ip}`, { count: 1, resetAt: Date.now() + 10 * 60 * 1000 });
+  } else {
+    r.count++;
+  }
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const first = forwarded.split(',')[0].trim();
+    if (first) return first;
+  }
+  return req.socket.remoteAddress || '127.0.0.1';
 }
 
 // ---------- منطق الأعضاء والاشتراكات ----------
@@ -151,12 +237,16 @@ function newMemberCode() {
   return String(next);
 }
 
+function toEnglishDigits(str) {
+  return String(str || '').replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
+}
+
 function cleanMemberCode(val, required = false) {
   if (val === undefined || val === null || val === '') {
     if (required) throw new ApiError(400, 'كود العضو مطلوب');
     return null;
   }
-  const s = String(val).trim();
+  const s = toEnglishDigits(String(val).trim());
   if (!/^\d+$/.test(s)) {
     throw new ApiError(400, 'كود العضو يجب أن يتكون من أرقام فقط');
   }
@@ -301,13 +391,15 @@ route('POST', '/api/login', null, (ctx) => {
   checkLoginAllowed(ctx.ip);
   const pw = typeof ctx.body.password === 'string' ? ctx.body.password : '';
   let role = null;
-  if (safeEqual(pw, getAdminPassword())) role = 'admin';
-  else if (safeEqual(pw, getStaffPassword())) role = 'staff';
+  if (verifyPasswordAndUpgrade(pw, getAdminPassword(), 'admin_password')) role = 'admin';
+  else if (verifyPasswordAndUpgrade(pw, getStaffPassword(), 'staff_password')) role = 'staff';
   if (!role) {
     recordFailure(ctx.ip);
-    throw new ApiError(401, 'كلمة المرور غلط');
+    logAudit('login_failed', 'guest', 'محاولة تسجيل دخول فاشلة بكلمة مرور غير صحيحة', ctx.ip);
+    throw new ApiError(401, 'كلمة المرور غير صحيحة');
   }
-  failures.delete(ctx.ip);
+  rateLimits.delete(`login:${ctx.ip}`);
+  logAudit('login_success', role, `تسجيل دخول ناجح بصلاحية ${role}`, ctx.ip);
   const exp = Date.now() + SESSION_HOURS * 3600 * 1000;
   const secure = ctx.req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
   return {
@@ -527,13 +619,14 @@ route('DELETE', '/api/subscriptions/:id', 'admin', (ctx) => {
 });
 
 function memberBarcodeSvg(code) {
-  const s = String(code || '').trim();
-  // باركود عريض وضخم للسكانر بخطوط واضحة وهامش أبيض آمن وسهل القراءة
-  const barWidth = s.length <= 4 ? 7 : s.length <= 6 ? 6 : s.length <= 8 ? 5 : 4;
+  const s = toEnglishDigits(String(code || '').trim());
+  // باركود عريض وواضح للسكانر بهامش أمان أبيض قياسي لا يقل عن 12 وحدة لسرعة وسهولة المسح
+  const barWidth = s.length <= 4 ? 6 : s.length <= 6 ? 5 : s.length <= 8 ? 4 : 3;
+  const quiet = Math.max(barWidth * 12, 45);
   return toBarcode(s, {
     barWidth,
-    height: 180,
-    quiet: 40,
+    height: 160,
+    quiet,
     fontSize: 22,
   });
 }
@@ -546,17 +639,26 @@ route('GET', '/api/members/:id/qr.svg', 'staff', (ctx) => {
 });
 
 // المسارات العامة لعرض كارت العضوية والـ QR (متاحة للعضو عبر رابط الواتساب بدون تسجيل دخول)
-function findMemberByIdent(ident) {
-  const s = String(ident || '').trim();
+function maskPhone(p) {
+  const s = String(p || '').trim();
+  if (s.length < 8) return s;
+  return s.slice(0, 4) + '****' + s.slice(-3);
+}
+
+function findMemberByIdent(ident, allowNumericId = true) {
+  const s = toEnglishDigits(String(ident || '').trim());
   let m = db.prepare('SELECT * FROM members WHERE code = ?').get(s);
-  if (!m && /^\d+$/.test(s)) {
+  if (!m && allowNumericId && /^\d+$/.test(s)) {
     m = db.prepare('SELECT * FROM members WHERE id = ?').get(Number(s));
   }
   return m;
 }
 
 route('GET', '/api/public/card/:ident', null, (ctx) => {
-  const m = findMemberByIdent(ctx.params.ident);
+  checkRateLimit(`public_card:${ctx.ip}`, 45, 60 * 1000, 'طلب سريع جداً، يرجى الانتظار قليلاً');
+  // منع تخمين المعرفات المتسلسلة (Enumeration attack) للعامة عبر حصر البحث بالكود فقط
+  const isAuth = !!ctx.session;
+  const m = findMemberByIdent(ctx.params.ident, isAuth);
   if (!m) throw new ApiError(404, 'العضو غير موجود');
   const today = todayStr();
   const sub = subscriptionState(m.id, today);
@@ -565,7 +667,8 @@ route('GET', '/api/public/card/:ident', null, (ctx) => {
     id: m.id,
     name: m.name,
     code: m.code,
-    phone: m.phone,
+    // إخفاء منتصف رقم الهاتف للزوار لحماية خصوصية المشترك، وإظهاره فقط للموظفين المسجلين
+    phone: isAuth ? m.phone : maskPhone(m.phone),
     active: m.active,
     sub: {
       plan_name: sub.plan_name,
@@ -1131,6 +1234,153 @@ route('POST', '/api/backup/restore', 'admin', (ctx) => {
 });
 
 
+// ---------- ميزة تجميد الاشتراك (Freeze Subscription) ----------
+route('POST', '/api/members/:id/freeze', 'staff', (ctx) => {
+  const id = intParam(ctx.params.id);
+  const m = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
+  if (!m) throw new ApiError(404, 'العضو غير موجود');
+
+  const days = intParam(ctx.body.days);
+  if (days < 1 || days > 365) throw new ApiError(400, 'عدد أيام التجميد يجب أن يكون بين 1 و 365');
+  const reason = cleanStr(ctx.body.reason || 'طلب من العضو', 200, 'سبب التجميد');
+
+  const today = todayStr();
+  const sub = db
+    .prepare(
+      `SELECT * FROM subscriptions WHERE member_id = ? AND status = 'active'
+       AND end_date >= ? ORDER BY end_date DESC LIMIT 1`
+    )
+    .get(id, today);
+
+  if (!sub) throw new ApiError(400, 'لا يوجد اشتراك نشط وساري لهذا العضو لتجميده');
+
+  const oldEnd = sub.end_date;
+  const newEnd = addDays(oldEnd, days);
+
+  db.exec('BEGIN');
+  try {
+    db.prepare('UPDATE subscriptions SET end_date = ? WHERE id = ?').run(newEnd, sub.id);
+    const freezeNote = `[تجميد ${days} يوم حتى ${newEnd} - ${reason}]`;
+    const updatedNotes = m.notes ? `${m.notes}\n${freezeNote}` : freezeNote;
+    db.prepare('UPDATE members SET notes = ? WHERE id = ?').run(updatedNotes, id);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+
+  logAudit(
+    'subscription_frozen',
+    ctx.session.role,
+    `تجميد اشتراك العضو "${m.name}" (${m.code}) لمدة ${days} يوم (تاريخ الانتهاء الجديد: ${newEnd}). السبب: ${reason}`,
+    ctx.ip
+  );
+
+  return {
+    ok: true,
+    message: `تم تجميد الاشتراك وتمديده ${days} يوماً حتى ${newEnd} بنجاح`,
+    newEndDate: newEnd,
+  };
+});
+
+// ---------- صحة وأداء قاعدة البيانات ----------
+route('GET', '/api/database/health', 'admin', () => {
+  const startTime = Date.now();
+  const check = db.prepare('PRAGMA quick_check(1)').get();
+  const integrity = check && (check.quick_check === 'ok' || check.integrity_check === 'ok') ? 'ok' : 'warning';
+
+  const memberCount = db.prepare('SELECT COUNT(*) AS c FROM members').get().c;
+  const subCount = db.prepare('SELECT COUNT(*) AS c FROM subscriptions').get().c;
+  const attCount = db.prepare('SELECT COUNT(*) AS c FROM attendance').get().c;
+  const planCount = db.prepare('SELECT COUNT(*) AS c FROM plans').get().c;
+  const auditCount = db.prepare('SELECT COUNT(*) AS c FROM audit_logs').get().c;
+
+  const dbPath = path.join(DATA_DIR, 'gym.db');
+  const walPath = path.join(DATA_DIR, 'gym.db-wal');
+  const dbSize = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+  const walSize = fs.existsSync(walPath) ? fs.statSync(walPath).size : 0;
+
+  const queryDurationMs = Date.now() - startTime;
+
+  return {
+    integrity,
+    status: integrity === 'ok' ? 'سليمة 100% ومحمية' : 'تحتاج فحص وصيانة',
+    queryDurationMs,
+    stats: {
+      members: memberCount,
+      subscriptions: subCount,
+      attendance: attCount,
+      plans: planCount,
+      auditLogs: auditCount,
+    },
+    sizes: {
+      dbSizeKb: Math.round(dbSize / 1024),
+      walSizeKb: Math.round(walSize / 1024),
+      totalMb: ((dbSize + walSize) / (1024 * 1024)).toFixed(2),
+    },
+  };
+});
+
+route('POST', '/api/database/optimize', 'admin', (ctx) => {
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  db.exec('PRAGMA optimize;');
+  logAudit('database_optimized', ctx.session.role, 'صيانة وضغط قاعدة البيانات وتحديث الفهارس', ctx.ip);
+  return { ok: true, message: 'تم تحسين وصيانة قاعدة البيانات بنجاح' };
+});
+
+// ---------- سجل الحركات والتدقيق (Audit Logs) ----------
+route('GET', '/api/audit-logs', 'admin', () => {
+  return db.prepare('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100').all();
+});
+
+// ---------- تصدير البيانات إلى Excel / CSV ----------
+function toCsvRow(arr) {
+  return arr
+    .map((val) => {
+      const s = String(val === undefined || val === null ? '' : val).replace(/"/g, '""');
+      return `"${s}"`;
+    })
+    .join(',');
+}
+
+route('GET', '/api/export/members.csv', 'admin', () => {
+  const today = todayStr();
+  const members = db.prepare('SELECT * FROM members ORDER BY id ASC').all();
+  const headers = ['كود العضو', 'الاسم', 'الموبايل', 'الحالة', 'الباقة الحالية', 'تاريخ الانتهاء', 'الأيام المتبقية', 'تاريخ التسجيل', 'ملاحظات'];
+  const rows = [toCsvRow(headers)];
+
+  for (const m of members) {
+    const sub = subscriptionState(m.id, today);
+    const stateLabel = !m.active ? 'موقوف' : sub.state === 'active' ? 'ساري' : sub.state === 'expiring' ? 'أوشك على الانتهاء' : sub.state === 'expired' ? 'منتهي' : 'بدون اشتراك';
+    rows.push(
+      toCsvRow([
+        m.code,
+        m.name,
+        m.phone,
+        stateLabel,
+        sub.plan_name || '-',
+        sub.end_date || '-',
+        sub.days_left !== null ? sub.days_left : '-',
+        m.created_at ? m.created_at.slice(0, 10) : '-',
+        m.notes || '',
+      ])
+    );
+  }
+
+  const csvContent = '\uFEFF' + rows.join('\r\n');
+  const filename = `gym-members-${today}.csv`;
+
+  logAudit('export_members_csv', 'admin', 'تصدير بيانات الأعضاء إلى ملف Excel/CSV');
+
+  return {
+    raw: Buffer.from(csvContent, 'utf8'),
+    type: 'text/csv; charset=utf-8',
+    headers: {
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  };
+});
+
 // ---------- الملفات الثابتة ----------
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MIME = {
@@ -1187,7 +1437,9 @@ function serveStatic(req, res, pathname, session) {
     }
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
     });
     res.end(buf);
   });
@@ -1259,7 +1511,7 @@ const server = http.createServer(async (req, res) => {
     const isRestore = url.pathname === '/api/backup/restore';
     const bodyLimit = isRestore ? 50 * 1024 * 1024 : 100 * 1024;
     const body = req.method === 'GET' || req.method === 'DELETE' ? {} : await readBody(req, bodyLimit);
-    const ip = req.socket.remoteAddress || '';
+    const ip = getClientIp(req);
     const out = await r.handler({ req, url, params, body, session, ip });
     if (out && out.raw !== undefined) {
       res.writeHead(200, {

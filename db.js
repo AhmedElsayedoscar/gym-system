@@ -7,7 +7,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'gym.db'));
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL; PRAGMA cache_size = -64000;');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS plans (
@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS reminders (
   status     TEXT NOT NULL DEFAULT 'sent'
 );
 CREATE INDEX IF NOT EXISTS idx_rem_member ON reminders(member_id, sent_at);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  action       TEXT NOT NULL,
+  performed_by TEXT NOT NULL DEFAULT 'admin',
+  details      TEXT NOT NULL DEFAULT '',
+  ip           TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
 
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,

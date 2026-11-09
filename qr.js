@@ -356,8 +356,8 @@ const C128_PATTERNS = [
   '11011110110','11110110110','10101111000','10100011110','10001011110',
   '10111101000','10111100010','11110101000','11110100010','10111011110',
   '10111101110','11101011110','11110101110',
-  '11010000100','11010010000','11010011110', // 103=START_B, 104=START_A, 105=START_C  (نستخدم 104=StartB)
-  '11000111010', // 106 = STOP
+  '11010000100','11010010000','11010011110', // 103=START_A, 104=START_B, 105=START_C (StartB = 104)
+  '1100011101011', // 106 = STOP (13-bit standard pattern 2-3-3-1-1-1-2)
 ];
 
 const START_B = 104;
@@ -382,7 +382,8 @@ function encodeCode128(text) {
 function toBarcode(text, opts = {}) {
   const barWidth  = opts.barWidth  ?? 2;    // عرض وحدة الشريط بالبكسل
   const height    = opts.height    ?? 80;   // ارتفاع الشريط
-  const quiet     = opts.quiet     ?? 10;   // هامش صامت جانبي
+  // هامش أمان أبيض جانبي (Quiet Zone) وفق مواصفات Code128 القياسية لا يقل عن 10-12 ضعف عرض الوحدة
+  const quiet     = opts.quiet     ?? Math.max(barWidth * 12, 24);
   const showText  = opts.showText  !== false;
   const fontSize  = opts.fontSize  ?? 12;
   const dark      = opts.dark      || '#000000';
@@ -390,24 +391,32 @@ function toBarcode(text, opts = {}) {
   const textColor = opts.textColor || dark;
 
   const vals = encodeCode128(String(text));
-  // جمع bits كل القيم
+  // جمع bits كل القيم (رمز الـ STOP يتضمن شريط النهاية 2 بت كاملين)
   let bits = '';
   for (const v of vals) bits += C128_PATTERNS[v];
-  bits += '1'; // الشريط الإضافي الأخير في STOP
 
   const barsW = bits.length * barWidth;
   const totalW = barsW + quiet * 2;
   const fontPad = showText ? fontSize + 8 : 0;
   const totalH = height + fontPad;
 
-  // بناء مستطيلات الأشرطة الداكنة فقط
+  // بناء مستطيلات الأشرطة الداكنة بعد تجميع البتات المتتالية لمنع أي فواصل ناتجة عن التنعيم
   let rects = '';
   let x = quiet;
-  for (const bit of bits) {
-    if (bit === '1') {
-      rects += `<rect x="${x}" y="0" width="${barWidth}" height="${height}" fill="${dark}"/>`;
+  let i = 0;
+  while (i < bits.length) {
+    if (bits[i] === '1') {
+      let run = 1;
+      while (i + run < bits.length && bits[i + run] === '1') run++;
+      rects += `<rect x="${x}" y="0" width="${run * barWidth}" height="${height}" fill="${dark}"/>`;
+      x += run * barWidth;
+      i += run;
+    } else {
+      let run = 1;
+      while (i + run < bits.length && bits[i + run] === '0') run++;
+      x += run * barWidth;
+      i += run;
     }
-    x += barWidth;
   }
 
   const textEl = showText
@@ -422,4 +431,3 @@ function toBarcode(text, opts = {}) {
     `</svg>`
   );
 }
-

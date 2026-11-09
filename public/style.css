@@ -317,6 +317,8 @@ input:focus, select:focus, textarea:focus {
   padding: 6px 4px;
   min-height: 80px;
   object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }
 .qr-box .code { font-size: 0.85rem; font-weight: 800; padding-bottom: 6px; color: var(--brand-light); }
 
@@ -632,8 +634,10 @@ body.cardpage {
   width: 100%;
   max-width: 100%;
   display: block;
-  height: 110px;
+  height: 115px;
   object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }
 .card-mobile-hint {
   text-align: center;

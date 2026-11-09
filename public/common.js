@@ -269,21 +269,24 @@ async function renderMemberCardToBlob(m, gymName, barcodeImgElem) {
   // رسم الباركود الرئيسي بحجم ضخم وعريض جداً لأعلى سرعة استجابة في المسح
   const naturalRatio = (barcodeImg.naturalWidth && barcodeImg.naturalHeight)
     ? (barcodeImg.naturalWidth / barcodeImg.naturalHeight)
-    : 3.0;
+    : 3.2;
 
-  const barH = 260; // ارتفاع ضخم للأعمدة يضمن التقاط السكانر فوراً بأي زاوية
-  let barW = Math.round(barH * naturalRatio);
-  const maxBarW = Math.round(w * 0.82); // حد أقصى 82% من عرض الكارت (~830px)
-  if (barW > maxBarW) barW = maxBarW;
-  const minBarW = Math.round(w * 0.60); // حد أدنى 60% (~610px)
-  if (barW < minBarW) barW = minBarW;
+  // الحفاظ على النسبة الأصلية بالضبط مع منع التشويه
+  const maxBarW = Math.round(w * 0.84); // حد أقصى لعرض الباركود (~850px)
+  const maxBarH = 240;                  // حد أقصى لارتفاع الباركود
+  let barW = maxBarW;
+  let barH = Math.round(barW / naturalRatio);
+  if (barH > maxBarH) {
+    barH = maxBarH;
+    barW = Math.round(barH * naturalRatio);
+  }
 
-  const padX = 20;
-  const padY = 15;
+  const padX = 26;
+  const padY = 16;
   const boxW = barW + padX * 2;
   const boxH = barH + padY * 2;
   const boxX = Math.round((w - boxW) / 2);
-  const boxY = 315;
+  const boxY = 320;
 
   // خلفية بيضاء ناصعة مع إطار ذهبي فخم يمنحان السكانر أعلى تباين ممكن
   ctx.fillStyle = '#ffffff';
@@ -296,7 +299,11 @@ async function renderMemberCardToBlob(m, gymName, barcodeImgElem) {
   ctx.stroke();
 
   try {
+    ctx.save();
+    // تعطيل تنعيم الصورة لضمان حدة حواف الباركود بنسبة 100% ومنع أي بهتان بين الخطوط
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(barcodeImg, boxX + padX, boxY + padY, barW, barH);
+    ctx.restore();
   } catch (err) {
     console.warn('Barcode draw error:', err);
   }
